@@ -49,7 +49,11 @@ export async function init(repoRoot: string, requestedPort?: number): Promise<In
   if (changed) wrote.push(rel(root, settingsPath))
   else skipped.push(rel(root, settingsPath) + ' (이미 설정됨)')
 
-  // 3) gitignore
+  // 3) MCP 서버 등록 (에이전트가 구조를 물어볼 창구)
+  if (registerMcp(root, port)) wrote.push('.mcp.json')
+  else skipped.push('.mcp.json (이미 있음)')
+
+  // 4) gitignore
   if (ensureGitignore(root)) wrote.push('.gitignore')
 
   return {
@@ -177,6 +181,36 @@ function starterCommand(port: number): string {
   return fs.existsSync(entry)
     ? `node --experimental-strip-types "${entry.split(path.sep).join('/')}" ensure --root ${target} --port ${port}`
     : `npx -y codyssey ensure --root ${target} --port ${port}`
+}
+
+/** Claude Code 가 읽는 프로젝트 MCP 설정. 기존 서버는 건드리지 않는다. */
+function registerMcp(root: string, port: number): boolean {
+  const p = path.join(root, '.mcp.json')
+  let cfg: Record<string, any> = {}
+  if (fs.existsSync(p)) {
+    try {
+      cfg = JSON.parse(fs.readFileSync(p, 'utf8'))
+    } catch {
+      return false // 남의 설정을 덮어쓰지 않는다
+    }
+  }
+  cfg.mcpServers ??= {}
+  const entry = mcpEntry(port)
+  if (JSON.stringify(cfg.mcpServers.codyssey) === JSON.stringify(entry)) return false
+  cfg.mcpServers.codyssey = entry
+  fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n')
+  return true
+}
+
+function mcpEntry(port: number) {
+  const entry = fileURLToPath(new URL('../cli.ts', import.meta.url))
+  const dev = fs.existsSync(entry)
+  return {
+    command: dev ? process.execPath : 'npx',
+    args: dev
+      ? ['--experimental-strip-types', entry.split(path.sep).join('/'), 'mcp', '--port', String(port)]
+      : ['-y', 'codyssey', 'mcp', '--port', String(port)],
+  }
 }
 
 function ensureGitignore(root: string): boolean {

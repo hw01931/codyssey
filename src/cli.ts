@@ -8,6 +8,9 @@ import { Daemon } from './daemon/server.ts'
 import { init, openBrowser, spawnDaemon } from './setup/init.ts'
 import { health, resolvePort, samePath, savePort } from './setup/port.ts'
 import { doctor } from './setup/doctor.ts'
+import { runMcp } from './mcp/server.ts'
+import { archDiff, renderDiff, shouldFail } from './setup/archdiff.ts'
+import { Daemon as _D } from './daemon/server.ts'
 
 const [, , cmd = 'help', ...rest] = process.argv
 
@@ -34,6 +37,8 @@ switch (cmd) {
   case 'start': case 'ui': case 'watch': await cmdStart(); break
   case 'ensure': await cmdEnsure(); break
   case 'doctor': await cmdDoctor(); break
+  case 'mcp': await runMcp(path.resolve(root), explicitPort); break
+  case 'diff': await cmdDiff(); break
   case 'scan': await cmdScan(); break
   case 'status': await cmdStatus(); break
   case 'impact': await cmdImpact(positional[0]); break
@@ -48,6 +53,8 @@ ${C.b('CODYSSEY')} ${C.dim('- AI 가 구조를 깨뜨리지 않게 지켜주는 
   ${C.b('codyssey start')}           웹 화면 + 파일 감시 시작
   ${C.dim('codyssey ensure')}          꺼져 있으면 조용히 띄우기 (훅이 자동 호출)
   ${C.b('codyssey doctor')}          설정이 제대로 됐는지 점검
+  ${C.dim('codyssey mcp')}             MCP 서버 (에이전트가 구조를 물어볼 창구)
+  ${C.b('codyssey diff')} <기준>      기준 커밋 대비 아키텍처가 어떻게 바뀌었나
   ${C.dim('codyssey scan')}            구조 파일만 만들기
   ${C.dim('codyssey status')}          터미널에 요약 출력
   ${C.dim('codyssey impact <파일>')}   이 파일을 고치면 뭐가 영향받나
@@ -155,6 +162,23 @@ async function cmdDoctor() {
   ${C.green('이상 없습니다.')}
 `)
   process.exitCode = bad ? 1 : 0
+}
+
+async function cmdDiff() {
+  const base = positional[0] ?? 'origin/main'
+  // 규칙과 잠금 목록은 데몬을 띄우지 않고 파일에서 직접 읽는다 (CI 에서 돌아야 한다)
+  const d0 = new _D(root, 0)
+  await d0.fullScan()
+  d0.loadRules()
+  const d = await archDiff(root, base, d0.rules, d0.lockedFiles())
+  const md = renderDiff(d)
+
+  if (has('markdown')) console.log(md)
+  else {
+    console.log()
+    console.log(md.replace(/^#+ /gm, '').replace(/`/g, '').replace(/<sub>.*<\/sub>/g, ''))
+  }
+  if (has('fail-on-violation') && shouldFail(d)) process.exitCode = 1
 }
 
 async function cmdScan() {

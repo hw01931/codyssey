@@ -1,0 +1,50 @@
+name: 아키텍처 검사
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  arch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 기준 커밋과 비교하려면 히스토리가 필요하다
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: 아키텍처 변화 계산
+        id: diff
+        run: |
+          npm run build --silent
+          node dist/cli.js diff "origin/${{ github.base_ref }}" --markdown > arch.md || true
+          cat arch.md
+
+      - name: PR 에 코멘트
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            const body = fs.readFileSync('arch.md', 'utf8')
+            const marker = '<!-- codyssey-arch -->'
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo, issue_number: context.issue.number,
+            })
+            const mine = comments.find(c => c.body.includes(marker))
+            const payload = marker + '\n' + body
+            if (mine) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: mine.id, body: payload })
+            } else {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body: payload })
+            }
+
+      - name: 규칙 위반이면 실패
+        run: node dist/cli.js diff "origin/${{ github.base_ref }}" --fail-on-violation

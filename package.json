@@ -17,6 +17,7 @@
     "prepack": "node build.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "chokidar": "^4.0.3",
     "tree-sitter-wasm": "^1.1.4",
     "web-tree-sitter": "^0.26.12",
