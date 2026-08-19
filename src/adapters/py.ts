@@ -49,14 +49,18 @@ export const pyAdapter: LangAdapter = {
     for (const m of captures(await getQuery(G, 'imports', IMPORT_Q), root)) {
       if (!m.mod) continue
       const spec = m.mod.text.trim()
-      out.imports.push({ spec, line: m.mod.startPosition.row + 1 })
-      // `from routes import orders` 의 orders 는 서브모듈일 수 있다 -> 별도 spec 으로도 등록
+      const line = m.mod.startPosition.row + 1
       if (m.stmt?.type === 'import_from_statement') {
-        for (const name of importedNames(m.stmt)) {
+        const names = importedNames(m.stmt)
+        // `from a import b` 에서 b 는 a 의 심볼일 수도, 서브모듈 a.b 일 수도 있다.
+        // 모듈 쪽 엣지에는 b 를 가져온 이름으로 달고, 서브모듈 쪽은 추측성으로 따로 시도한다.
+        out.imports.push({ spec, line, names: names.length ? names : undefined })
+        for (const name of names) {
           out.bindings[name] = `${spec}.${name}`
-          out.imports.push({ spec: `${spec}.${name}`, line: m.mod.startPosition.row + 1, speculative: true })
+          out.imports.push({ spec: `${spec}.${name}`, line, speculative: true })
         }
       } else {
+        out.imports.push({ spec, line })
         out.bindings[spec.split('.')[0]] = spec
       }
     }

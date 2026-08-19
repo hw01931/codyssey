@@ -11,8 +11,8 @@ const grammarFor = (rel: string) =>
 
 /** import / export-from / dynamic import / require 를 한 번에 잡는다. */
 const IMPORT_Q = `
-(import_statement source: (string (string_fragment) @spec))
-(export_statement source: (string (string_fragment) @spec))
+(import_statement source: (string (string_fragment) @spec)) @stmt
+(export_statement source: (string (string_fragment) @spec)) @stmt
 ((call_expression
    function: [(import) (identifier) @fn]
    arguments: (arguments (string (string_fragment) @spec)))
@@ -39,7 +39,11 @@ export const tsAdapter: LangAdapter = {
 
     for (const m of captures(await getQuery(grammar, 'imports', IMPORT_Q), root)) {
       if (!m.spec) continue
-      out.imports.push({ spec: m.spec.text, line: m.spec.startPosition.row + 1 })
+      out.imports.push({
+        spec: m.spec.text,
+        line: m.spec.startPosition.row + 1,
+        names: m.stmt ? importedNames(m.stmt) : undefined,
+      })
     }
 
     for (const m of captures(await getQuery(grammar, 'fetch', FETCH_Q), root)) {
@@ -50,6 +54,7 @@ export const tsAdapter: LangAdapter = {
         url: url.text,
         line: m.url.startPosition.row + 1,
         confidence: url.confidence,
+        inSymbol: enclosingSymbol(m.url),
       })
     }
 
@@ -90,6 +95,62 @@ export const tsAdapter: LangAdapter = {
     const segs = (m[1] ?? '').split('/').filter(Boolean).filter(s => !/^\(.*\)$/.test(s))
     return { method: 'PAGE', path: '/' + segs.join('/'), owner: '', line: 1 } satisfies RouteDecl
   },
+}
+
+/**
+ * 이 import 로 가져온 이름들.  `import { a, b } from 'x'` => ['a','b']
+ * default / namespace / side-effect import 는 모듈 전체를 가져온 것이라 undefined.
+ */
+function importedNames(stmt: Node): string[] | undefined {
+  const names: string[] = []
+  let wholeModule = false
+
+  const visit = (n: Node) => {
+    switch (n.type) {
+      case 'import_specifier':
+      case 'export_specifier': {
+        const name = n.childForFieldName('name') ?? n.namedChildren[0]
+        if (name) names.push(name.text)
+        return
+      }
+      case 'namespace_import':
+      case 'namespace_export':
+        wholeModule = true
+        return
+    }
+    for (const c of n.namedChildren) if (c) visit(c)
+  }
+
+  const clause = stmt.namedChildren.find(c => c?.type === 'import_clause' || c?.type === 'export_clause')
+  if (!clause) return undefined // side-effect import
+  // import_clause 바로 아래의 identifier 는 default import
+  if (clause.type === 'import_clause' && clause.namedChildren.some(c => c?.type === 'identifier')) wholeModule = true
+  visit(clause)
+
+  return wholeModule || !names.length ? undefined : names
+}
+
+const DECL_TYPES = new Set([
+  'function_declaration',
+  'generator_function_declaration',
+  'class_declaration',
+  'method_definition',
+  'variable_declarator',
+])
+
+/**
+ * 이 노드를 감싼 **최상위** 심볼 이름. 심볼 게이팅의 출발점.
+ * 가장 가까운 선언이 아니라 제일 바깥 선언을 잡아야 한다.
+ * `function fetchOrders() { const res = await fetch(..) }` 에서 답은 res 가 아니라 fetchOrders 다.
+ */
+function enclosingSymbol(node: Node): string | undefined {
+  let outermost: string | undefined
+  for (let n: Node | null = node.parent; n && n.type !== 'program'; n = n.parent) {
+    if (!DECL_TYPES.has(n.type)) continue
+    const name = n.childForFieldName('name')
+    if (name) outermost = name.text
+  }
+  return outermost
 }
 
 function matchAlias(pattern: string, spec: string): string | null {
