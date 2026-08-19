@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { Daemon } from '../src/daemon/server.ts'
+import { projectPort, samePath } from '../src/setup/port.ts'
 
 const PORT = 7788
 const BASE = `http://127.0.0.1:${PORT}`
@@ -67,8 +68,8 @@ console.log(`\n${c.d('임시 폴더: ' + tmp)}`)
 // ---------------------------------------------------------------- 기본
 
 console.log('\n[데몬]')
-const health = await (await fetch(`${BASE}/health`)).json()
-eq('살아있고 파일을 읽었다', health, { ok: true, files: 19 })
+const health = (await (await fetch(`${BASE}/health`)).json()) as any
+eq('살아있고 파일을 읽었다', { ok: health.ok, files: health.files }, { ok: true, files: 19 })
 ok('웹 화면이 뜬다', (await (await fetch(`${BASE}/`)).text()).includes('CODYSSEY'))
 
 // ---------------------------------------------------------------- 통과해야 하는 것
@@ -213,6 +214,32 @@ ok(
   '기능마다 전용 파일 수가 붙어있다',
   state.features.find((f: any) => f.id === 'PAGE /checkout')?.exclusive === 4,
   `checkout=${state.features.find((f: any) => f.id === 'PAGE /checkout')?.exclusive}`,
+)
+
+// ---------------------------------------------------------------- 포트 충돌 (실제로 당한 버그)
+
+console.log('\n[포트 충돌 방어]')
+const h2 = (await (await fetch(`${BASE}/health`)).json()) as any
+ok('health 가 어느 폴더인지 알려준다', samePath(h2.repoRoot, tmp), h2.repoRoot)
+ok('프로젝트마다 포트가 다르다', projectPort(tmp) !== projectPort(path.join(tmp, 'web')))
+ok('같은 폴더면 항상 같은 포트', projectPort(tmp) === projectPort(tmp))
+
+setRules(`version: 1
+protect:
+  - path: api/services/payment.py
+    reason: 잠김
+features: []
+layers: []
+autolock: { minFeatures: 3, mode: block }
+`)
+const outsideBefore = (await (await fetch(`${BASE}/api/state`)).json()).foreign
+const outside = await pre(path.join(tmp, '..', 'somewhere-else', 'app.ts'))
+eq('내 폴더 밖 파일은 통과시킨다 (P5)', decision(outside), 'allow')
+const outsideAfter = (await (await fetch(`${BASE}/api/state`)).json()) as any
+ok('대신 눈에 보이게 센다', outsideAfter.foreign > outsideBefore, `foreign=${outsideAfter.foreign}`)
+ok(
+  '활동 기록에도 남는다',
+  outsideAfter.activity.some((a: any) => a.action === 'foreign'),
 )
 
 // ---------------------------------------------------------------- 증분 갱신

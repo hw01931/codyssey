@@ -15,7 +15,7 @@ const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui
 export interface Activity {
   at: number
   file: string
-  action: Verdict['action']
+  action: Verdict['action'] | 'foreign'
   reason?: string
   rule?: string
   tool: string
@@ -29,6 +29,8 @@ export class Daemon {
   features!: Features
   rules: Rules = defaultRules()
   activity: Activity[] = []
+  /** 우리 루트 밖에서 들어온 요청 수. 0 이 아니면 포트 설정이 잘못된 것이다. */
+  foreign = 0
   private ctx!: ResolveCtx
   private server?: http.Server
   private watcher?: chokidar.FSWatcher
@@ -144,6 +146,15 @@ export class Daemon {
     const raw = String(input.file_path ?? input.path ?? '')
     if (!raw) return { action: 'allow' }
     const file = this.toRel(raw)
+
+    // 우리 프로젝트 밖의 파일이다. 포트가 겹쳐서 남의 훅이 들어온 것이다.
+    // 통과시키되(P5) 반드시 눈에 보이게 남긴다. 조용히 넘기면 아무도 모른다.
+    if (file.startsWith('../')) {
+      this.foreign++
+      this.log({ at: Date.now(), file: raw, action: 'foreign', tool, reason: '다른 프로젝트의 파일입니다' })
+      return { action: 'allow' }
+    }
+
     if (!this.graph.nodes.has(file) && !this.rules.protect.some(p => p.path === file)) {
       // 그래프에 없는 파일(새 파일, 설정파일 등)에 대해서는 아무 주장도 하지 않는다
       return { action: 'allow' }
@@ -214,6 +225,7 @@ export class Daemon {
       violations: findViolations(this.rules, this.graph),
       unresolved: this.graph.unresolved,
       rules: this.rules,
+      foreign: this.foreign,
       activity: this.activity.slice(0, 50),
     }
   }
@@ -237,7 +249,11 @@ export class Daemon {
     }
 
     try {
-      if (url.pathname === '/health') return send(200, { ok: true, files: this.graph.nodes.size })
+      if (url.pathname === '/health') {
+        // repoRoot 를 같이 준다. 어느 프로젝트의 데몬인지 확인할 수 있어야
+        // 포트가 겹쳤을 때 조용히 엉뚱한 데몬한테 물어보는 일이 없다.
+        return send(200, { ok: true, files: this.graph.nodes.size, repoRoot: this.repoRoot })
+      }
 
       if (url.pathname === '/pre' && req.method === 'POST') {
         const body = await readJson(req)

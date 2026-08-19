@@ -6,9 +6,11 @@ import YAML from 'yaml'
 import { scan } from '../index/scan.ts'
 import { computeFeatures, autolockCandidates } from '../core/features.ts'
 import { defaultRules } from '../core/rules.ts'
+import { resolvePort, savePort } from './port.ts'
 
 export interface InitResult {
   repoRoot: string
+  port: number
   files: number
   features: number
   suggestions: number
@@ -18,10 +20,14 @@ export interface InitResult {
 
 const HOOK_MATCHER = 'Edit|Write|NotebookEdit'
 
-export async function init(repoRoot: string, port: number): Promise<InitResult> {
+export async function init(repoRoot: string, requestedPort?: number): Promise<InitResult> {
   const root = path.resolve(repoRoot)
   const wrote: string[] = []
   const skipped: string[] = []
+
+  // 프로젝트마다 다른 포트를 쓴다. 남이 잡고 있는 포트는 절대 안 고른다.
+  const port = await resolvePort(root, requestedPort)
+  savePort(root, port)
 
   const { graph, files } = await scan(root)
   const features = computeFeatures(graph)
@@ -48,6 +54,7 @@ export async function init(repoRoot: string, port: number): Promise<InitResult> 
 
   return {
     repoRoot: root,
+    port,
     files: files.size,
     features: features.roots.length,
     suggestions: suggestions.length,
@@ -94,9 +101,18 @@ function mergeHooks(settingsPath: string, port: number): boolean {
 
   // 세션이 시작될 때 데몬이 꺼져 있으면 알아서 띄운다. 사용자는 아무것도 안 해도 된다.
   settings.hooks.SessionStart ??= []
-  const hasStarter = settings.hooks.SessionStart.some((g: any) =>
-    (g.hooks ?? []).some((h: any) => typeof h.command === 'string' && h.command.includes('codyssey')),
-  )
+  let hasStarter = false
+  for (const group of settings.hooks.SessionStart) {
+    for (const h of group.hooks ?? []) {
+      if (typeof h.command !== 'string' || !h.command.includes('codyssey')) continue
+      hasStarter = true
+      const next = starterCommand(port)
+      if (h.command !== next) {
+        h.command = next
+        changed = true
+      }
+    }
+  }
   if (!hasStarter) {
     settings.hooks.SessionStart.push({
       hooks: [
@@ -118,10 +134,22 @@ function mergeHooks(settingsPath: string, port: number): boolean {
   ] as const) {
     const url = `http://127.0.0.1:${port}/${endpoint}`
     settings.hooks[event] ??= []
-    const already = settings.hooks[event].some((g: any) =>
-      (g.hooks ?? []).some((h: any) => typeof h.url === 'string' && h.url.includes('/' + endpoint) && h.url.includes('127.0.0.1')),
-    )
-    if (already) continue
+
+    // 이미 우리 훅이 있으면 URL 을 현재 포트로 고쳐준다.
+    // 예전에는 그냥 건너뛰어서, 포트가 바뀌어도 옛 포트를 계속 가리켰다.
+    let found = false
+    for (const group of settings.hooks[event]) {
+      for (const h of group.hooks ?? []) {
+        if (typeof h.url !== 'string' || !h.url.includes('127.0.0.1') || !h.url.endsWith('/' + endpoint)) continue
+        found = true
+        if (h.url !== url) {
+          h.url = url
+          changed = true
+        }
+      }
+    }
+    if (found) continue
+
     settings.hooks[event].push({
       matcher: HOOK_MATCHER,
       hooks: [{ type: 'http', url, timeout: 3 }],

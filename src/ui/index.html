@@ -99,6 +99,10 @@
   .colsub { font-size: 10px; fill: var(--fg2); opacity: .75; font-family: ui-monospace, Consolas, monospace; }
   .zoomlv { font-size: 12px; color: var(--fg2); min-width: 38px; text-align: center; font-variant-numeric: tabular-nums; }
   .toggle { font-size: 12px; color: var(--fg2); display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  .banner {
+    background: var(--lock-bg); color: var(--lock); border-bottom: 1px solid var(--lock);
+    padding: 9px 18px; font-size: 13px;
+  }
   .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; margin-right: 4px; }
 </style>
 </head>
@@ -119,6 +123,8 @@
   <button class="small" id="btn-zoom-in">+</button>
   <button id="btn-rescan">다시 스캔</button>
 </header>
+
+<div id="banner"></div>
 
 <main>
   <aside>
@@ -176,6 +182,10 @@ async function load() {
 }
 
 function render() {
+  $('#banner').innerHTML = S.foreign
+    ? `<div class="banner">이 프로그램이 보고 있는 폴더 밖의 파일 요청이 ${S.foreign}건 들어왔습니다.
+       다른 프로젝트의 설정이 이 포트를 가리키고 있습니다. 그쪽에서 <b>codyssey init</b> 을 다시 실행하세요.</div>`
+    : ''
   const chk = $('#chk-empty'); if (chk) chk.checked = showEmpty
   $('#c-files').textContent = S.counts.files
   $('#c-features').textContent = S.counts.features

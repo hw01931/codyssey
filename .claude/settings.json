@@ -1,0 +1,41 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --experimental-strip-types \"D:/workspace/CODYSSEY/src/cli.ts\" ensure --root \"${CLAUDE_PROJECT_DIR}\" --port 7955",
+            "async": true,
+            "timeout": 20,
+            "statusMessage": "codyssey 준비 중..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:7955/pre",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:7955/post",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}
