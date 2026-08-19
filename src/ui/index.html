@@ -98,6 +98,14 @@
   .colhead { font-size: 11px; fill: var(--fg2); font-weight: 700; }
   .colsub { font-size: 10px; fill: var(--fg2); opacity: .75; font-family: ui-monospace, Consolas, monospace; }
   .zoomlv { font-size: 12px; color: var(--fg2); min-width: 38px; text-align: center; font-variant-numeric: tabular-nums; }
+  .shown { font-size: 12px; color: var(--fg2); }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .segbtn {
+    border: 0; border-radius: 0; padding: 5px 10px; font-size: 12px;
+    background: var(--bg); color: var(--fg2); cursor: pointer;
+  }
+  .segbtn + .segbtn { border-left: 1px solid var(--line); }
+  .segbtn.on { background: var(--accent); color: #fff; }
   .toggle { font-size: 12px; color: var(--fg2); display: flex; align-items: center; gap: 5px; cursor: pointer; }
   .banner {
     background: var(--lock-bg); color: var(--lock); border-bottom: 1px solid var(--lock);
@@ -116,6 +124,12 @@
     <span>잠김 <b id="c-locks">-</b></span>
   </div>
   <div class="spacer"></div>
+  <span id="shown" class="shown"></span>
+  <div class="seg">
+    <button class="segbtn" data-scope="near">주변만</button>
+    <button class="segbtn" data-scope="module">이 모듈</button>
+    <button class="segbtn" data-scope="all">전체</button>
+  </div>
   <label class="toggle"><input type="checkbox" id="chk-empty"> 빈 파일도 보기</label>
   <button class="small" id="btn-fit">화면 맞춤</button>
   <button class="small" id="btn-zoom-out">−</button>
@@ -135,6 +149,12 @@
         <span>전체 보기</span>
       </div>
       <div id="features"></div>
+    </section>
+
+    <section>
+      <h2>모듈</h2>
+      <p class="hint">폴더로 나눈 코드 묶음. 클릭하면 그 안만 보여줍니다.</p>
+      <div id="modules"></div>
     </section>
 
     <section>
@@ -168,11 +188,21 @@
 
 <script>
 const $ = s => document.querySelector(s)
-let S = null, selected = null, activeFeature = '', showEmpty = false, zoom = 'fit'
+let S = null, selected = null, activeFeature = '', activeModule = '', showEmpty = false, zoom = 'fit'
+/** 큰 레포에서 전체 그래프는 실타래가 된다. 기본은 '주변만'. */
+let scope = 'near'
+let hops = 1
 
 async function load() {
   try {
     S = await (await fetch('/api/state')).json()
+    // 데몬이 구버전이면 새 필드가 없다. 화면이 통째로 죽는 것보다 낫다.
+    S.modules ??= []
+    S.suggestions = (S.suggestions ?? []).map(x => ({ kind: 'feature', why: [], ...x, why: x.why ?? x.features ?? [] }))
+    S.activity ??= []
+    S.features ??= []
+    S.edges ??= []
+    S.nodes ??= []
     $('#dot').classList.remove('off')
   } catch {
     $('#dot').classList.add('off')
@@ -186,6 +216,7 @@ function render() {
     ? `<div class="banner">이 프로그램이 보고 있는 폴더 밖의 파일 요청이 ${S.foreign}건 들어왔습니다.
        다른 프로젝트의 설정이 이 포트를 가리키고 있습니다. 그쪽에서 <b>codyssey init</b> 을 다시 실행하세요.</div>`
     : ''
+  for (const b of document.querySelectorAll('.segbtn')) b.classList.toggle('on', b.dataset.scope === scope && !activeFeature)
   const chk = $('#chk-empty'); if (chk) chk.checked = showEmpty
   $('#c-files').textContent = S.counts.files
   $('#c-features').textContent = S.counts.features
@@ -216,6 +247,11 @@ function render() {
         </div>
       </div>`).join('')
     : '<p class="empty">제안할 게 없습니다.</p>'
+
+  $('#modules').innerHTML = (S.modules ?? []).slice(0, 12).map(m => `
+    <div class="item ${activeModule === m.name && scope === 'module' ? 'active' : ''}" data-module="${esc(m.name)}">
+      <span class="path" style="font-size:12px">${esc(m.name)}</span><span class="num">${m.files}</span>
+    </div>`).join('') || '<p class="empty">-</p>'
 
   $('#activity').innerHTML = S.activity.length
     ? S.activity.map(a => `
@@ -259,7 +295,11 @@ function drawGraph() {
   const box = $('#canvas')
   const rows = Math.max(...order.map(L => cols.get(L).length))
   const vertical = pickOrientation(order.length, rows, box)
-  const layout = place(cols, order, vertical)
+  // 한 줄에 몇 개까지 쌓을지: 화면 높이(가로배치)나 너비(세로배치)에 맞춘다
+  const wrapAt = vertical
+    ? Math.max(3, Math.floor((box.clientWidth - 60) / (W + GAP)))
+    : Math.max(3, Math.floor((box.clientHeight - HEAD - 60) / (H + GAP)))
+  const layout = place(cols, order, vertical, wrapAt)
 
   if (zoom === 'fit') {
     zoom = Math.max(0.4, Math.min(1, (box.clientWidth - 28) / layout.width, (box.clientHeight - 28) / layout.height))
@@ -301,6 +341,10 @@ function drawGraph() {
     `<svg width="${Math.round(layout.width * zoom)}" height="${Math.round(layout.height * zoom)}"
           viewBox="0 0 ${layout.width} ${layout.height}">${heads}${paths}${boxes}</svg>`
   $('#zoomlv').textContent = Math.round(zoom * 100) + '%'
+  $('#shown').textContent =
+    scope === 'near' && hiddenCount
+      ? `${shown.length}개 표시 · ${hiddenCount}개 이상 숨김`
+      : `${shown.length} / ${S.counts.files}개 표시`
 }
 
 const bez = (x1, y1, x2, y2, v) =>
@@ -316,30 +360,139 @@ function pickOrientation(layers, rows, box) {
   return vert > horiz
 }
 
-function place(cols, order, vertical) {
+/**
+ * 한 층에 노드가 많으면 접어서 여러 줄로 놓는다.
+ * 안 접으면 21개짜리 층 하나 때문에 그림 전체가 세로로 길어져서 배율이 반토막 난다.
+ */
+function place(cols, order, vertical, wrapAt) {
   const pos = new Map()
+  const heads = []
   let width = 0
   let height = 0
+  let cursor = 20 // 진행 방향 오프셋
+
   order.forEach((L, i) => {
     const list = cols.get(L)
-    list.forEach((n, r) => {
+    const lanes = Math.max(1, Math.ceil(list.length / wrapAt))
+    const perLane = Math.ceil(list.length / lanes)
+
+    heads[i] = vertical ? { x: 20, y: cursor - 20 } : { x: cursor, y: 16 }
+
+    list.forEach((n, idx) => {
+      const lane = Math.floor(idx / perLane)
+      const slot = idx % perLane
       const p = vertical
-        ? { x: 20 + r * (W + GAP), y: HEAD + i * (H + GAP + HEAD) }
-        : { x: 20 + i * (W + GAP), y: HEAD + 8 + r * (H + GAP) }
+        ? { x: 20 + slot * (W + GAP), y: cursor + lane * (H + GAP) }
+        : { x: cursor + lane * (W + GAP), y: HEAD + 8 + slot * (H + GAP) }
       pos.set(n.id, p)
       width = Math.max(width, p.x + W + 20)
       height = Math.max(height, p.y + H + 20)
     })
+
+    cursor += lanes * (vertical ? H + GAP : W + GAP) + (vertical ? HEAD : GAP * 1.5)
   })
-  const head = i =>
-    vertical ? { x: 20, y: HEAD + i * (H + GAP + HEAD) - 20 } : { x: 20 + i * (W + GAP), y: 16 }
-  return { pos, width, height, head }
+
+  return { pos, width, height, head: i => heads[i] ?? { x: 20, y: 16 } }
 }
 
-/** 빈 파일(심볼도 연결도 없는 __init__.py 같은 것)은 기본으로 숨긴다. */
+/**
+ * 화면에 그릴 노드를 고른다.
+ *
+ * 400 파일짜리 레포를 통째로 그리면 40% 배율에 선 1000개짜리 실타래가 된다.
+ * 실제로 그렇게 만들어놓고 보니 아무것도 읽을 수 없었다.
+ * 사람이 보고 싶은 건 조감도가 아니라 '내가 지금 건드리는 곳 주변' 이다.
+ */
 function visibleNodes() {
-  if (showEmpty) return S.nodes
-  return S.nodes.filter(n => n.isEntry || n.symbols > 0)
+  let list = showEmpty ? S.nodes : S.nodes.filter(n => n.isEntry || n.symbols > 0)
+
+  if (activeFeature) {
+    const inFeature = new Set(nodesOfFeature(activeFeature))
+    return list.filter(n => inFeature.has(n.id))
+  }
+  if (scope === 'all') return list
+  if (scope === 'module') {
+    const mod = activeModule || S.nodes.find(n => n.id === selected)?.module
+    if (mod) return list.filter(n => n.module === mod)
+    return list
+  }
+
+  // 주변만: 씨앗에서 넓혀가되 개수 예산을 넘기지 않는다.
+  // 예산이 없으면 400 파일짜리 레포에서 결국 전부 그리게 된다.
+  const seeds = focusSeeds(list)
+  if (!seeds.length) return list
+  const near = budgetedNeighborhood(seeds, list, BUDGET)
+  return list.filter(n => near.has(n.id))
+}
+
+/**
+ * 한 화면에서 사람이 읽을 수 있는 상자 수.
+ * 60 으로 해봤더니 한 열에 45개가 쌓여 40% 배율로 줄어들었다. 24 면 100% 로 읽힌다.
+ * '이 파일을 쓰는 곳' 전체 목록은 오른쪽 패널에 있으니 그림이 다 보여줄 필요가 없다.
+ */
+const BUDGET = 24
+
+/**
+ * 씨앗에서 한 겹씩 넓히되 예산 안에서만 채운다.
+ *
+ * 겹 통째로 못 넣으면 멈추게 했더니, 허브 파일 하나가 이웃 100개를 달고 있어서
+ * 상자 세 개만 보였다. 그래서 겹을 잘라 넣되 몇 개를 숨겼는지 반드시 알린다.
+ * 조용히 줄이면 사용자가 그게 전부라고 믿는다.
+ */
+let hiddenCount = 0
+
+function budgetedNeighborhood(seeds, list, budget) {
+  const ids = new Set(list.map(n => n.id))
+  const deg = new Map()
+  const adj = new Map()
+  for (const e of S.edges) {
+    if (!ids.has(e.from) || !ids.has(e.to)) continue
+    for (const [a, b] of [[e.from, e.to], [e.to, e.from]]) {
+      const arr = adj.get(a)
+      if (arr) arr.push(b)
+      else adj.set(a, [b])
+      deg.set(a, (deg.get(a) ?? 0) + 1)
+    }
+  }
+  const moduleOf = id => S.nodes.find(n => n.id === id)?.module ?? ''
+  const seedModules = new Set(seeds.map(moduleOf))
+
+  const near = new Set(seeds)
+  let frontier = [...seeds]
+  hiddenCount = 0
+
+  while (frontier.length && near.size < budget) {
+    const layer = new Set()
+    for (const cur of frontier) for (const other of adj.get(cur) ?? []) if (!near.has(other)) layer.add(other)
+    if (!layer.size) break
+
+    // 같은 모듈 먼저, 그다음 연결이 적은 것 먼저. 허브를 덜 끌어온다.
+    const ranked = [...layer].sort((a, b) => {
+      const ma = seedModules.has(moduleOf(a)) ? 0 : 1
+      const mb = seedModules.has(moduleOf(b)) ? 0 : 1
+      return ma - mb || (deg.get(a) ?? 0) - (deg.get(b) ?? 0) || (a < b ? -1 : 1)
+    })
+    const room = budget - near.size
+    for (const id of ranked.slice(0, room)) near.add(id)
+    hiddenCount += Math.max(0, ranked.length - room)
+    frontier = ranked.slice(0, room)
+  }
+  return near
+}
+
+/** 관심의 출발점. 적을수록 그림이 선명해진다. */
+function focusSeeds(list) {
+  const ids = new Set(list.map(n => n.id))
+  const seeds = []
+  const add = id => {
+    if (ids.has(id) && !seeds.includes(id)) seeds.push(id)
+  }
+
+  if (selected) add(selected)
+  for (const a of S.activity) { if (seeds.length >= 3) break; add(a.file) }
+  for (const n of list) { if (seeds.length >= 3) break; if (n.locked) add(n.id) }
+  for (const s of S.suggestions) { if (seeds.length >= 3) break; add(s.file) }
+  for (const f of S.features) { if (seeds.length >= 3) break; add(f.file) }
+  return seeds
 }
 
 /**
@@ -460,7 +613,12 @@ document.addEventListener('click', async ev => {
   }
 
   const nodeEl = ev.target.closest('[data-node]')
-  if (nodeEl) { selected = nodeEl.dataset.node; render(); return }
+  if (nodeEl) {
+    selected = nodeEl.dataset.node
+    if (scope === 'near') zoom = 'fit'
+    render()
+    return
+  }
 
   const featLock = ev.target.closest('[data-featlock]')
   if (featLock) {
@@ -488,6 +646,12 @@ document.addEventListener('click', async ev => {
     await load()
     return
   }
+
+  const seg = ev.target.closest('[data-scope]')
+  if (seg) { scope = seg.dataset.scope; zoom = 'fit'; render(); return }
+
+  const modEl = ev.target.closest('[data-module]')
+  if (modEl) { activeModule = modEl.dataset.module; scope = 'module'; activeFeature = ''; zoom = 'fit'; render(); return }
 
   if (ev.target.id === 'chk-empty') { showEmpty = ev.target.checked; drawGraph(); return }
   if (ev.target.id === 'btn-fit') { zoom = 'fit'; drawGraph(); return }
