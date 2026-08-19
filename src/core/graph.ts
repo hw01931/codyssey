@@ -23,7 +23,7 @@ export interface GEdge {
 
 export interface Entry {
   id: string // 'GET /api/v1/orders' | 'PAGE /checkout'
-  kind: 'route' | 'page'
+  kind: 'route' | 'page' | 'entry'
   method: string
   path: string
   file: string

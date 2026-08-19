@@ -162,8 +162,25 @@ function matchAlias(pattern: string, spec: string): string | null {
   return spec.slice(head.length, spec.length - tail.length)
 }
 
+/**
+ * TypeScript ESM 은 `.ts` 파일을 `'./x.js'` 로 import 한다 (출력 기준으로 쓰기 때문).
+ * 요즘 TS 프로젝트에서 제일 흔한 형태라, 이걸 못 풀면 그래프가 통째로 비어버린다.
+ */
+const JS_TO_TS: Record<string, string[]> = {
+  '.js': ['.ts', '.tsx'],
+  '.jsx': ['.tsx'],
+  '.mjs': ['.mts', '.ts'],
+  '.cjs': ['.cts', '.ts'],
+}
+
 function tryExts(base: string, ctx: ResolveCtx): string | null {
-  if (/\.\w+$/.test(base) && ctx.exists(base)) return base
+  if (/\.\w+$/.test(base)) {
+    if (ctx.exists(base)) return base
+    const ext = base.slice(base.lastIndexOf('.'))
+    const stem = base.slice(0, base.length - ext.length)
+    for (const alt of JS_TO_TS[ext] ?? []) if (ctx.exists(stem + alt)) return stem + alt
+    // 확장자처럼 보이지만 실은 폴더/파일명의 일부일 수 있다 (예: config.prod -> config.prod.ts)
+  }
   for (const e of RESOLVE_EXTS) if (ctx.exists(base + e)) return base + e
   for (const e of RESOLVE_EXTS) if (ctx.exists(`${base}/index${e}`)) return `${base}/index${e}`
   return null

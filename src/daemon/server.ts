@@ -83,7 +83,7 @@ export class Daemon {
   }
 
   private rebuild() {
-    this.graph = buildGraph(this.files, this.ctx)
+    this.graph = buildGraph(this.files, this.ctx, this.repoRoot)
     this.features = computeFeatures(this.graph)
   }
 

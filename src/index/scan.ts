@@ -59,7 +59,7 @@ export function createCtx(repoRoot: string): ResolveCtx {
  * 파싱 결과들로 그래프를 만든다. I/O 없이 순수 계산이라 파일 하나 바뀔 때 다시 돌려도 싸다.
  * (파싱만 증분으로 하고 빌드는 통째로 다시 하는 게 훨씬 단순하고 충분히 빠르다)
  */
-export function buildGraph(files: Map<string, FileInfo>, ctx: ResolveCtx): Graph {
+export function buildGraph(files: Map<string, FileInfo>, ctx: ResolveCtx, repoRoot = '.'): Graph {
   const graph = new Graph()
   for (const f of files.values()) {
     graph.addNode({ id: f.rel, lang: f.adapter.name, symbols: f.parsed.symbols })
@@ -91,9 +91,14 @@ export function buildGraph(files: Map<string, FileInfo>, ctx: ResolveCtx): Graph
   // 3) 라우트 진입점 (prefix 합성)
   addRouteEntries(graph, files, ctx)
   addPageEntries(graph, files)
+  addPackageEntries(graph, files, repoRoot)
 
   // 4) FE -> BE 경계
   linkHttpCalls(graph, files)
+
+  // 5) 그래도 진입점이 하나도 없으면 그래프의 뿌리를 쓴다.
+  //    라우트도 페이지도 없는 CLI/라이브러리에서 기능이 0개가 되면 도구 전체가 무의미해진다.
+  if (graph.entries.size === 0) addRootEntries(graph, files)
 
   return graph
 }
@@ -106,7 +111,7 @@ export async function scan(repoRoot: string): Promise<ScanResult> {
     const info = await parseFile(repoRoot, rel, ctx)
     if (info) files.set(rel, info)
   }
-  return { graph: buildGraph(files, ctx), files, ms: performance.now() - t0 }
+  return { graph: buildGraph(files, ctx, repoRoot), files, ms: performance.now() - t0 }
 }
 
 // ---------------------------------------------------------------- 라우트 합성
@@ -167,6 +172,63 @@ function addPageEntries(graph: Graph, files: Map<string, FileInfo>) {
     if (!r) continue
     graph.addEntry({ id: `${r.method} ${r.path}`, kind: 'page', method: r.method, path: r.path, file: f.rel, line: r.line })
   }
+}
+
+/** package.json 이 선언한 진입점 (bin / main / exports). 라이브러리와 CLI 의 '기능'. */
+function addPackageEntries(graph: Graph, files: Map<string, FileInfo>, repoRoot: string) {
+  const roots = new Set([...files.values()].map(f => f.projectRoot))
+  for (const projectRoot of roots) {
+    const pkgPath = path.join(projectRoot === '.' ? '' : projectRoot, 'package.json')
+    let pkg: Record<string, unknown>
+    try {
+      pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, pkgPath), 'utf8'))
+    } catch {
+      continue
+    }
+
+    const specs = new Set<string>()
+    const collect = (v: unknown) => {
+      if (typeof v === 'string') specs.add(v)
+      else if (v && typeof v === 'object') for (const x of Object.values(v)) collect(x)
+    }
+    collect(pkg.bin)
+    collect(pkg.main)
+    collect(pkg.exports)
+
+    for (const spec of specs) {
+      // package.json 은 빌드 결과(dist/lib)를 가리키는 일이 많다. 소스로 되돌린다.
+      const candidates = [spec, spec.replace(/^\.?\/?(dist|lib|build|out)\//, 'src/')]
+      for (const c of candidates) {
+        const rel = path.posix.join(projectRoot === '.' ? '' : projectRoot, c.replace(/^\.\//, ''))
+        const hit = tsResolveLike(rel, files)
+        if (!hit) continue
+        graph.addEntry({ id: `ENTRY ${hit}`, kind: 'entry', method: 'ENTRY', path: hit, file: hit, line: 1 })
+        break
+      }
+    }
+  }
+}
+
+/** 어떤 진입점도 못 찾았을 때: 아무도 import 하지 않는 파일이 곧 시작점이다. */
+function addRootEntries(graph: Graph, files: Map<string, FileInfo>) {
+  const isTest = (p: string) => /(^|\/)(tests?|__tests__|spec)\//.test(p) || /\.(test|spec)\.\w+$/.test(p)
+  for (const id of graph.nodes.keys()) {
+    if (graph.in(id).length) continue
+    if (isTest(id)) continue
+    if (!files.get(id)?.parsed.symbols.length) continue
+    graph.addEntry({ id: `ENTRY ${id}`, kind: 'entry', method: 'ENTRY', path: id, file: id, line: 1 })
+  }
+}
+
+/** package.json 의 경로 문자열을 실제 소스 파일로 맞춰본다. */
+function tsResolveLike(rel: string, files: Map<string, FileInfo>): string | null {
+  if (files.has(rel)) return rel
+  const stem = rel.replace(/\.(js|mjs|cjs|jsx)$/, '')
+  for (const e of ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']) {
+    if (files.has(stem + e)) return stem + e
+    if (files.has(`${stem}/index${e}`)) return `${stem}/index${e}`
+  }
+  return null
 }
 
 // ---------------------------------------------------------------- FE <-> BE
@@ -271,7 +333,12 @@ function makeCtx(repoRoot: string): ResolveCtx {
 /** 외부 패키지인지, 풀었어야 하는 로컬 모듈인지 구분. 후자만 unresolved 로 기록. */
 function looksLocal(spec: string, f: FileInfo, files: Map<string, FileInfo>, ctx: ResolveCtx): boolean {
   if (f.adapter.name !== 'py') {
-    return Object.keys(ctx.aliasesOf(f.projectRoot)).some(p => spec.startsWith(p.replace('*', '')))
+    // 'paths': { '*': [...] } 처럼 접두어가 없는 별칭은 모든 패키지 이름과 매칭된다.
+    // 그러면 외부 패키지가 전부 '못 푼 로컬 모듈'로 잡혀서 진단이 소음이 된다.
+    return Object.keys(ctx.aliasesOf(f.projectRoot))
+      .map(p => p.replace('*', ''))
+      .filter(prefix => prefix.length > 0)
+      .some(prefix => spec.startsWith(prefix))
   }
   const top = spec.split('.')[0]
   const base = path.posix.join(f.projectRoot, top)
