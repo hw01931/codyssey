@@ -15,6 +15,10 @@ export interface GEdge {
   confidence: Confidence
   via?: string // http 엣지의 'GET /api/v1/orders'
   line?: number
+  /** `from` 이 `to` 에서 실제로 가져다 쓴 이름들. undefined = 모듈 전체 */
+  names?: string[]
+  /** 이 엣지가 `from` 의 어느 최상위 심볼에서 나왔는지. undefined = 모듈 레벨 */
+  fromSymbol?: string
 }
 
 export interface Entry {
