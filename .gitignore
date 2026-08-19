@@ -1,0 +1,34 @@
+# deps
+node_modules/
+
+# build
+dist/
+*.tsbuildinfo
+
+# codyssey 산출물
+#   graph.json 은 생성물이라 커밋하지 않는다 (P8: diff 노이즈 0)
+#   ARCHITECTURE.md / rules.yaml 은 실제 프로젝트에서는 커밋 대상이다
+.codyssey/graph.json
+# 픽스처의 .codyssey 는 통째로 테스트 출력물
+fixtures/**/.codyssey/
+
+# 문서는 README 만 올린다. 계획/결정기록/명세는 로컬 작업물이다.
+*.md
+!README.md
+
+# 스크래치
+*.local.*
+check-*.mjs
+dbg.mjs
+smoke.mjs
+
+# OS / 에디터
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# 로그
+*.log
+npm-debug.log*

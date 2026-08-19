@@ -1,0 +1,24 @@
+{
+  "name": "codyssey",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "codyssey": "./dist/cli.js"
+  },
+  "scripts": {
+    "dev": "node --experimental-strip-types src/cli.ts",
+    "build": "tsc -p .",
+    "test": "node --experimental-strip-types test/run.ts"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "tree-sitter-wasm": "^1.1.4",
+    "web-tree-sitter": "^0.26.12",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

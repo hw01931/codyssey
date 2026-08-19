@@ -1,0 +1,4 @@
+# P8: 산출물이 바이트까지 결정적이어야 하므로 줄바꿈을 LF 로 고정한다.
+* text=auto eol=lf
+*.png binary
+*.wasm binary
