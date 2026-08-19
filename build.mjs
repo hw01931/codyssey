@@ -20,7 +20,8 @@ await build({
   outfile: 'dist/cli.js',
   // cli.ts 첫 줄에 이미 셰뱅이 있다. banner 로 또 넣으면 두 줄이 되어 문법 오류가 난다.
   // 네이티브/wasm 은 묶지 않고 런타임 의존으로 둔다
-  external: ['web-tree-sitter', 'tree-sitter-wasm', 'chokidar', 'yaml'],
+  // 런타임 의존은 묶지 않는다. 묶으면 node_modules 와 중복되고 번들이 15배가 된다.
+  external: ['web-tree-sitter', 'tree-sitter-wasm', 'chokidar', 'yaml', '@modelcontextprotocol/sdk', 'zod'],
   logLevel: 'warning',
 })
 
