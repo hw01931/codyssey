@@ -205,7 +205,8 @@ function drawGraph() {
 
   const cols = new Map()
   for (const n of nodes) {
-    const d = depth.get(n.id) ?? 99
+    // 진입점에서 안 닿는 파일(앱 조립 파일 등)도 사실상 최상위라 맨 왼쪽에 둔다
+    const d = depth.get(n.id) ?? 0
     if (!cols.has(d)) cols.set(d, [])
     cols.get(d).push(n)
   }
