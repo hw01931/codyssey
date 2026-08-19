@@ -184,6 +184,7 @@ export class Daemon {
         id: n.id,
         lang: n.lang,
         features: featuresOf(this.features, n.id),
+        symbols: n.symbols.length,
         locked: locked.has(n.id),
         isEntry: this.features.entries.some(e => e.file === n.id),
       })),
