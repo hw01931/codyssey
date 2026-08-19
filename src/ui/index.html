@@ -56,6 +56,15 @@
   }
   .item:hover { background: var(--bg3); }
   .item.active { background: var(--accent); color: #fff; }
+  .feat { margin-bottom: 4px; }
+  .feat.locked .item { background: var(--lock-bg); }
+  .featbar { padding: 0 9px 6px; }
+  button.tiny {
+    font-size: 11px; padding: 2px 8px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg2); cursor: pointer;
+  }
+  button.tiny.danger { background: var(--bg); color: var(--lock); border-color: var(--lock); }
+  button.tiny:hover { background: var(--bg3); }
   .item .num { font-size: 11px; opacity: .7; font-variant-numeric: tabular-nums; }
   .path { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px; word-break: break-all; }
 
@@ -173,8 +182,16 @@ function render() {
   $('#c-locks').textContent = S.counts.locks
 
   $('#features').innerHTML = S.features.map(f => `
-    <div class="item ${activeFeature === f.id ? 'active' : ''}" data-feature="${esc(f.id)}">
-      <span>${esc(label(f))}</span><span class="num">${f.size}</span>
+    <div class="feat ${f.locked ? 'locked' : ''}">
+      <div class="item ${activeFeature === f.id ? 'active' : ''}" data-feature="${esc(f.id)}">
+        <span>${f.locked ? '🔒 ' : ''}${esc(label(f))}</span><span class="num">${f.size}</span>
+      </div>
+      <div class="featbar">
+        <button class="tiny ${f.locked ? '' : 'danger'}"
+                data-featlock="${esc(f.id)}" data-unlock="${f.locked ? '1' : ''}">
+          ${f.locked ? '기능 잠금 해제' : `이 기능 잠그기 (${f.exclusive}개)`}
+        </button>
+      </div>
     </div>`).join('')
   $('#feat-all').classList.toggle('active', !activeFeature)
 
@@ -432,6 +449,21 @@ document.addEventListener('click', async ev => {
 
   const nodeEl = ev.target.closest('[data-node]')
   if (nodeEl) { selected = nodeEl.dataset.node; render(); return }
+
+  const featLock = ev.target.closest('[data-featlock]')
+  if (featLock) {
+    const id = featLock.dataset.featlock
+    const locked = !featLock.dataset.unlock
+    const f = S.features.find(x => x.id === id)
+    if (locked && !confirm(`'${id}' 기능만 쓰는 파일 ${f.exclusive}개를 잠급니다.
+여러 기능이 공유하는 파일은 건드리지 않습니다.`)) return
+    await fetch('/api/lock-feature', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id, locked, scope: 'exclusive' }),
+    })
+    await load()
+    return
+  }
 
   const lockBtn = ev.target.closest('[data-lock]')
   if (lockBtn) {

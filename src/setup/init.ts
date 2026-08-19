@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 import { scan } from '../index/scan.ts'
 import { computeFeatures, autolockCandidates } from '../core/features.ts'
@@ -90,6 +91,27 @@ function mergeHooks(settingsPath: string, port: number): boolean {
   settings.hooks ??= {}
 
   let changed = false
+
+  // 세션이 시작될 때 데몬이 꺼져 있으면 알아서 띄운다. 사용자는 아무것도 안 해도 된다.
+  settings.hooks.SessionStart ??= []
+  const hasStarter = settings.hooks.SessionStart.some((g: any) =>
+    (g.hooks ?? []).some((h: any) => typeof h.command === 'string' && h.command.includes('codyssey')),
+  )
+  if (!hasStarter) {
+    settings.hooks.SessionStart.push({
+      hooks: [
+        {
+          type: 'command',
+          command: starterCommand(port),
+          async: true,
+          timeout: 20,
+          statusMessage: 'codyssey 준비 중...',
+        },
+      ],
+    })
+    changed = true
+  }
+
   for (const [event, endpoint] of [
     ['PreToolUse', 'pre'],
     ['PostToolUse', 'post'],
@@ -114,6 +136,18 @@ function mergeHooks(settingsPath: string, port: number): boolean {
   return changed
 }
 
+/**
+ * 훅에서 실행할 명령. 개발 중에는 이 저장소의 cli.ts 를, 배포 후에는 npx 를 쓴다.
+ * 어느 쪽이든 이미 떠 있으면 아무것도 안 하고 즉시 끝난다.
+ */
+function starterCommand(port: number): string {
+  const entry = fileURLToPath(new URL('../cli.ts', import.meta.url))
+  const target = '"${CLAUDE_PROJECT_DIR}"'
+  return fs.existsSync(entry)
+    ? `node --experimental-strip-types "${entry.split(path.sep).join('/')}" ensure --root ${target} --port ${port}`
+    : `npx -y codyssey ensure --root ${target} --port ${port}`
+}
+
 function ensureGitignore(root: string): boolean {
   const p = path.join(root, '.gitignore')
   const line = '.codyssey/graph.json'
@@ -121,6 +155,30 @@ function ensureGitignore(root: string): boolean {
   if (cur.split(/\r?\n/).some(l => l.trim() === line)) return false
   fs.writeFileSync(p, (cur && !cur.endsWith('\n') ? cur + '\n' : cur) + `\n# codyssey (생성물)\n${line}\n`)
   return true
+}
+
+/** 데몬이 살아있나. 훅에서 쓰므로 빠르게 포기한다. */
+export async function isAlive(port: number): Promise<boolean> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(600) })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 데몬을 백그라운드로 띄우고 부모는 바로 빠진다.
+ * SessionStart 훅에서 부르면 사용자가 아무것도 실행할 필요가 없다.
+ */
+export function spawnDaemon(repoRoot: string, port: number) {
+  const entry = fileURLToPath(new URL('../cli.ts', import.meta.url))
+  const child = spawn(
+    process.execPath,
+    ['--experimental-strip-types', entry, 'start', '--root', repoRoot, '--port', String(port), '--no-open'],
+    { detached: true, stdio: 'ignore', cwd: repoRoot },
+  )
+  child.unref()
 }
 
 export function openBrowser(url: string) {

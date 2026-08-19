@@ -60,6 +60,24 @@ function push(m: Map<string, string[]>, k: string, v: string) {
 }
 
 /**
+ * 이 기능'만' 쓰는 파일들. 기능 단위 잠금의 기본 단위다.
+ * 공유 파일까지 잠그면 다른 기능 작업이 같이 막혀서 쓸모가 없어진다.
+ */
+export function exclusiveOf(features: Features, featureId: string): string[] {
+  return [...(features.members.get(featureId) ?? [])]
+    .filter(f => {
+      const owners = features.rootOwners.get(f) ?? []
+      return owners.length === 1 && owners[0] === featureId
+    })
+    .sort()
+}
+
+/** 이 기능이 닿는 파일 전부 (공유 파일 포함). */
+export function allFilesOf(features: Features, featureId: string): string[] {
+  return [...(features.members.get(featureId) ?? [])].sort()
+}
+
+/**
  * 자동 잠금 후보: minFeatures 개 이상의 기능이 공유하는 파일.
  * 사람은 rules.yaml 을 처음부터 쓸 필요 없이 이 제안을 승인만 하면 된다.
  */

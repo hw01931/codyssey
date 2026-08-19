@@ -1,5 +1,5 @@
 import type { Graph } from './graph.ts'
-import { autolockCandidates, featuresOf, type Features } from './features.ts'
+import { allFilesOf, autolockCandidates, exclusiveOf, featuresOf, type Features } from './features.ts'
 
 export interface ProtectRule {
   path: string
@@ -12,9 +12,21 @@ export interface LayerRule {
   reason?: string
 }
 
+/**
+ * 기능 단위 잠금.
+ *   exclusive - 이 기능만 쓰는 파일을 잠근다 (기본). 공유 파일은 안 건드린다
+ *   all       - 이 기능이 닿는 파일 전부를 잠근다. 공유 파일 때문에 넓게 막히니 주의
+ */
+export interface FeatureRule {
+  id: string
+  scope?: 'exclusive' | 'all'
+  reason?: string
+}
+
 export interface Rules {
   version: number
   protect: ProtectRule[]
+  features: FeatureRule[]
   layers: LayerRule[]
   autolock: { minFeatures: number; mode: 'off' | 'ask' | 'block' }
 }
@@ -22,6 +34,7 @@ export interface Rules {
 export const defaultRules = (): Rules => ({
   version: 1,
   protect: [],
+  features: [],
   layers: [],
   autolock: { minFeatures: 3, mode: 'ask' },
 })
@@ -63,7 +76,23 @@ export function checkEdit(rules: Rules, graph: Graph, features: Features, edit: 
     }
   }
 
-  // 2) 레이어 위반 (이 편집이 새로 들여오는 import 만 본다)
+  // 2) 기능 단위 잠금
+  for (const fr of rules.features ?? []) {
+    const scope = fr.scope ?? 'exclusive'
+    const inScope = scope === 'all' ? allFilesOf(features, fr.id) : exclusiveOf(features, fr.id)
+    if (!inScope.includes(file)) continue
+    return {
+      action: 'block',
+      rule: `feature: ${fr.id} (${scope})`,
+      reason: fr.reason ?? `'${fr.id}' 기능이 잠겨 있습니다.`,
+      hint:
+        scope === 'exclusive'
+          ? `이 파일은 '${fr.id}' 전용입니다. 다른 기능 파일은 자유롭게 고칠 수 있습니다.`
+          : undefined,
+    }
+  }
+
+  // 3) 레이어 위반 (이 편집이 새로 들여오는 import 만 본다)
   if (edit.added) {
     for (const spec of importSpecs(edit.added)) {
       const resolved = edit.resolve?.(spec, file) ?? null
@@ -83,7 +112,7 @@ export function checkEdit(rules: Rules, graph: Graph, features: Features, edit: 
     }
   }
 
-  // 3) 자동 잠금 (여러 기능이 공유하는 파일)
+  // 4) 자동 잠금 (여러 기능이 공유하는 파일)
   if (rules.autolock.mode !== 'off') {
     const feats = featuresOf(features, file)
     if (feats.length >= rules.autolock.minFeatures) {

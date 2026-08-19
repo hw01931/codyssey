@@ -166,6 +166,41 @@ await fetch(`${BASE}/api/lock`, {
 })
 eq('해제도 된다', decision(await pre('web/lib/money.ts')), 'allow')
 
+// ---------------------------------------------------------------- 기능 단위 잠금
+
+console.log('\n[기능 단위 잠금]')
+setRules(`version: 1
+protect: []
+features: []
+layers: []
+autolock: { minFeatures: 3, mode: off }
+`)
+await fetch(`${BASE}/api/lock-feature`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ id: 'PAGE /checkout', locked: true, scope: 'exclusive', reason: '결제 흐름 동결' }),
+})
+eq('그 기능 전용 파일은 차단', decision(await pre('web/components/CartSummary.tsx')), 'deny')
+eq('그 기능 전용 라우트도 차단', decision(await pre('api/routes/payments.py')), 'deny')
+ok('사유가 전달된다', reason(await pre('api/routes/payments.py')).includes('결제 흐름 동결'))
+eq('공유 파일은 안 막는다 (exclusive)', decision(await pre('web/lib/money.ts')), 'allow')
+eq('다른 기능 파일은 안 막는다', decision(await pre('web/components/OrderTable.tsx')), 'allow')
+
+await fetch(`${BASE}/api/lock-feature`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ id: 'PAGE /checkout', locked: true, scope: 'all' }),
+})
+eq('scope: all 이면 공유 파일까지 막는다', decision(await pre('web/lib/money.ts')), 'deny')
+eq('그래도 무관한 기능은 통과', decision(await pre('web/app/orders/page.tsx')), 'allow')
+
+await fetch(`${BASE}/api/lock-feature`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ id: 'PAGE /checkout', locked: false }),
+})
+eq('기능 잠금 해제', decision(await pre('web/components/CartSummary.tsx')), 'allow')
+
 // ---------------------------------------------------------------- 화면에 뿌릴 상태
 
 console.log('\n[웹 화면 데이터]')
@@ -174,6 +209,11 @@ eq('기능 4개', state.counts.features, 4)
 ok('노드마다 소속 기능이 붙어있다', state.nodes.find((n: any) => n.id === 'web/lib/money.ts')?.features.length === 3)
 ok('프론트->백엔드 연결이 보인다', state.edges.filter((e: any) => e.kind === 'http').length === 3)
 ok('잠금 제안이 나온다', state.suggestions.length > 0, `${state.suggestions.length}건`)
+ok(
+  '기능마다 전용 파일 수가 붙어있다',
+  state.features.find((f: any) => f.id === 'PAGE /checkout')?.exclusive === 4,
+  `checkout=${state.features.find((f: any) => f.id === 'PAGE /checkout')?.exclusive}`,
+)
 
 // ---------------------------------------------------------------- 증분 갱신
 

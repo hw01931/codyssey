@@ -1,0 +1,9 @@
+version: 1
+protect:
+  - path: src/core/graph.ts
+    reason: 그래프 코어. 실험용 잠금
+features: []
+layers: []
+autolock:
+  minFeatures: 3
+  mode: ask

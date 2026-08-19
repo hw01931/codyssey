@@ -5,7 +5,7 @@ import { scan } from './index/scan.ts'
 import type { Graph } from './core/graph.ts'
 import { computeFeatures, autolockCandidates, featuresOf, allEntriesOf } from './core/features.ts'
 import { Daemon } from './daemon/server.ts'
-import { init, openBrowser } from './setup/init.ts'
+import { init, isAlive, openBrowser, spawnDaemon } from './setup/init.ts'
 
 const [, , cmd = 'help', ...rest] = process.argv
 
@@ -30,6 +30,7 @@ const C = {
 switch (cmd) {
   case 'init': await cmdInit(); break
   case 'start': case 'ui': case 'watch': await cmdStart(); break
+  case 'ensure': await cmdEnsure(); break
   case 'scan': await cmdScan(); break
   case 'status': await cmdStatus(); break
   case 'impact': await cmdImpact(positional[0]); break
@@ -42,6 +43,7 @@ ${C.b('CODYSSEY')} ${C.dim('- AI 가 구조를 깨뜨리지 않게 지켜주는 
 
   ${C.b('codyssey init')}            처음 한 번. 설정하고 웹 화면을 엽니다
   ${C.b('codyssey start')}           웹 화면 + 파일 감시 시작
+  ${C.dim('codyssey ensure')}          꺼져 있으면 조용히 띄우기 (훅이 자동 호출)
   ${C.dim('codyssey scan')}            구조 파일만 만들기
   ${C.dim('codyssey status')}          터미널에 요약 출력
   ${C.dim('codyssey impact <파일>')}   이 파일을 고치면 뭐가 영향받나
@@ -93,6 +95,17 @@ async function cmdStart() {
   }
   process.on('SIGINT', bye)
   process.on('SIGTERM', bye)
+}
+
+/** 훅에서 부른다. 이미 떠 있으면 아무것도 안 하고 즉시 끝난다. */
+async function cmdEnsure() {
+  if (await isAlive(port)) return
+  spawnDaemon(path.resolve(root), port)
+  // 데몬이 포트를 잡을 때까지만 잠깐 기다린다. 못 떠도 조용히 넘어간다 (P5).
+  for (let i = 0; i < 20; i++) {
+    if (await isAlive(port)) return
+    await new Promise(r => setTimeout(r, 250))
+  }
 }
 
 async function cmdScan() {

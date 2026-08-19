@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 import chokidar from 'chokidar'
 import { buildGraph, createCtx, listFiles, parseFile, adapterFor, type FileInfo } from '../index/scan.ts'
-import { computeFeatures, autolockCandidates, featuresOf, type Features } from '../core/features.ts'
+import { computeFeatures, allFilesOf, autolockCandidates, exclusiveOf, featuresOf, type Features } from '../core/features.ts'
 import { checkEdit, defaultRules, findViolations, suggestRules, type Rules, type Verdict } from '../core/rules.ts'
 import type { Graph } from '../core/graph.ts'
 import type { ResolveCtx } from '../core/ir.ts'
@@ -108,6 +108,7 @@ export class Daemon {
         const parsed = YAML.parse(fs.readFileSync(this.rulesPath, 'utf8'))
         this.rules = { ...defaultRules(), ...(parsed ?? {}) }
         this.rules.protect ??= []
+        this.rules.features ??= []
         this.rules.layers ??= []
         this.rules.autolock = { ...defaultRules().autolock, ...(this.rules.autolock ?? {}) }
       }
@@ -120,6 +121,14 @@ export class Daemon {
   saveRules() {
     fs.mkdirSync(path.dirname(this.rulesPath), { recursive: true })
     fs.writeFileSync(this.rulesPath, YAML.stringify(this.rules))
+  }
+
+  /** 기능 단위 잠금. 기본은 그 기능만 쓰는 파일에만 걸린다. */
+  setFeatureLock(id: string, locked: boolean, scope: 'exclusive' | 'all' = 'exclusive', reason?: string) {
+    this.rules.features = (this.rules.features ?? []).filter(f => f.id !== id)
+    if (locked) this.rules.features.push({ id, scope, reason: reason ?? `'${id}' 기능 잠금` })
+    this.rules.features.sort((a, b) => (a.id < b.id ? -1 : 1))
+    this.saveRules()
   }
 
   setLock(file: string, locked: boolean, reason?: string) {
@@ -166,6 +175,10 @@ export class Daemon {
 
   state() {
     const locked = new Set(this.rules.protect.map(p => p.path))
+    for (const fr of this.rules.features ?? []) {
+      const files = (fr.scope ?? 'exclusive') === 'all' ? allFilesOf(this.features, fr.id) : exclusiveOf(this.features, fr.id)
+      for (const f of files) locked.add(f)
+    }
     return {
       repoRoot: this.repoRoot,
       counts: {
@@ -174,12 +187,18 @@ export class Daemon {
         features: this.features.roots.length,
         locks: locked.size,
       },
-      features: this.features.roots.map(r => ({
-        id: r.id,
-        kind: r.kind,
-        file: r.file,
-        size: this.features.members.get(r.id)?.size ?? 0,
-      })),
+      features: this.features.roots.map(r => {
+        const fr = (this.rules.features ?? []).find(f => f.id === r.id)
+        return {
+          id: r.id,
+          kind: r.kind,
+          file: r.file,
+          size: this.features.members.get(r.id)?.size ?? 0,
+          exclusive: exclusiveOf(this.features, r.id).length,
+          locked: Boolean(fr),
+          scope: fr?.scope ?? 'exclusive',
+        }
+      }),
       nodes: [...this.graph.nodes.values()].map(n => ({
         id: n.id,
         lang: n.lang,
@@ -247,6 +266,17 @@ export class Daemon {
       if (url.pathname === '/api/lock' && req.method === 'POST') {
         const body = await readJson(req)
         this.setLock(String(body.file), Boolean(body.locked), body.reason ? String(body.reason) : undefined)
+        return send(200, { ok: true, rules: this.rules })
+      }
+
+      if (url.pathname === '/api/lock-feature' && req.method === 'POST') {
+        const body = await readJson(req)
+        this.setFeatureLock(
+          String(body.id),
+          Boolean(body.locked),
+          body.scope === 'all' ? 'all' : 'exclusive',
+          body.reason ? String(body.reason) : undefined,
+        )
         return send(200, { ok: true, rules: this.rules })
       }
 
