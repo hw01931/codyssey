@@ -99,6 +99,8 @@
   .colsub { font-size: 10px; fill: var(--fg2); opacity: .75; font-family: ui-monospace, Consolas, monospace; }
   .zoomlv { font-size: 12px; color: var(--fg2); min-width: 38px; text-align: center; font-variant-numeric: tabular-nums; }
   .shown { font-size: 12px; color: var(--fg2); }
+  .shown a { color: var(--accent); }
+  .node.module rect { stroke-dasharray: 0; }
   .seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
   .segbtn {
     border: 0; border-radius: 0; padding: 5px 10px; font-size: 12px;
@@ -191,6 +193,8 @@ const $ = s => document.querySelector(s)
 let S = null, selected = null, activeFeature = '', activeModule = '', showEmpty = false, zoom = 'fit'
 /** 큰 레포에서 전체 그래프는 실타래가 된다. 기본은 '주변만'. */
 let scope = 'near'
+/** 전체 보기에서 파일까지 펼칠지. 기본은 모듈로 접어서 본다. */
+let expandAll = false
 let hops = 1
 
 async function load() {
@@ -272,13 +276,16 @@ const shortFeature = id => id.replace('PAGE ', '')
 
 // ---------------------------------------------------------------- 그래프
 
-const W = 186, H = 46, GAP = 22, HEAD = 34
+const H = 46, GAP = 22, HEAD = 34
+/** 상자 폭. 모듈 이름은 짧아서 좁게 그려도 읽히고, 그만큼 배율이 올라간다. */
+let W = 186
 
 function drawGraph() {
-  const shown = visibleNodes()
-  const ids = new Set(shown.map(n => n.id))
-  const edges = S.edges.filter(e => ids.has(e.from) && ids.has(e.to))
-  const focus = activeFeature ? new Set(nodesOfFeature(activeFeature)) : null
+  const vm = viewModel()
+  W = vm.collapsed ? 150 : 186
+  const shown = vm.items
+  const edges = vm.edges
+  const focus = activeFeature && !vm.collapsed ? new Set(nodesOfFeature(activeFeature)) : null
 
   const layer = assignLayers(shown, edges)
   const cols = new Map()
@@ -328,12 +335,11 @@ function drawGraph() {
     if (!p) return ''
     const dim = focus && !focus.has(n.id)
     const cls = ['node', n.isEntry && 'entry', n.locked && 'locked', selected === n.id && 'sel', dim && 'dim'].filter(Boolean).join(' ')
-    const name = n.id.split('/').pop()
-    const dir = n.id.slice(0, n.id.length - name.length)
-    return `<g class="${cls}" data-node="${esc(n.id)}">
+    const attr = n.isModule ? `data-module="${esc(n.id)}"` : `data-node="${esc(n.id)}"`
+    return `<g class="${cls}" ${attr}>
       <rect x="${p.x}" y="${p.y}" width="${W}" height="${H}"></rect>
-      <text x="${p.x + 10}" y="${p.y + 19}">${esc(trunc(name, 23))}${n.locked ? ' 🔒' : ''}</text>
-      <text class="sub" x="${p.x + 10}" y="${p.y + 34}">${esc(trunc(dir, 29))}</text>
+      <text x="${p.x + 10}" y="${p.y + 19}">${esc(trunc(n.label, 23))}${n.locked && !n.isModule ? ' 🔒' : ''}</text>
+      <text class="sub" x="${p.x + 10}" y="${p.y + 34}">${esc(trunc(n.sub, 29))}</text>
     </g>`
   }).join('')
 
@@ -341,8 +347,9 @@ function drawGraph() {
     `<svg width="${Math.round(layout.width * zoom)}" height="${Math.round(layout.height * zoom)}"
           viewBox="0 0 ${layout.width} ${layout.height}">${heads}${paths}${boxes}</svg>`
   $('#zoomlv').textContent = Math.round(zoom * 100) + '%'
-  $('#shown').textContent =
-    scope === 'near' && hiddenCount
+  $('#shown').innerHTML = vm.collapsed
+    ? `모듈 ${shown.length}개로 접음 · <a href="#" id="expand">파일까지 펼치기</a>`
+    : scope === 'near' && hiddenCount
       ? `${shown.length}개 표시 · ${hiddenCount}개 이상 숨김`
       : `${shown.length} / ${S.counts.files}개 표시`
 }
@@ -394,6 +401,73 @@ function place(cols, order, vertical, wrapAt) {
 
   return { pos, width, height, head: i => heads[i] ?? { x: 20, y: 16 } }
 }
+
+/**
+ * 무엇을 그릴지 정한다.
+ *
+ * 전체 보기에서 파일 408개를 그리면 상자는 어찌어찌 들어가도 **선 1039개**가
+ * 화면을 덮어버린다. 문제는 상자 수가 아니라 연결 수다.
+ * 그래서 전체 보기는 기본적으로 모듈(폴더 묶음) 단위로 접는다.
+ * 44개 상자에 선 수십 개면 전체 구조가 한눈에 들어온다.
+ */
+function viewModel() {
+  const files = visibleNodes()
+  const collapse = scope === 'all' && !expandAll && !activeFeature && files.length > COLLAPSE_AT
+  if (!collapse) {
+    const ids = new Set(files.map(n => n.id))
+    return {
+      collapsed: false,
+      items: files.map(n => ({
+        id: n.id,
+        label: n.id.split('/').pop(),
+        sub: n.id.slice(0, n.id.length - (n.id.split('/').pop()?.length ?? 0)),
+        locked: n.locked,
+        isEntry: n.isEntry,
+        module: n.module,
+      })),
+      edges: S.edges.filter(e => ids.has(e.from) && ids.has(e.to)),
+    }
+  }
+
+  // 모듈로 접기
+  const modOf = new Map(S.nodes.map(n => [n.id, n.module || '(루트)']))
+  const stat = new Map()
+  for (const n of files) {
+    const m = modOf.get(n.id)
+    const cur = stat.get(m) ?? { files: 0, locked: 0, entries: 0 }
+    cur.files++
+    if (n.locked) cur.locked++
+    if (n.isEntry) cur.entries++
+    stat.set(m, cur)
+  }
+  const pairs = new Map()
+  for (const e of S.edges) {
+    const a = modOf.get(e.from)
+    const b = modOf.get(e.to)
+    if (!a || !b || a === b || !stat.has(a) || !stat.has(b)) continue
+    const key = a + ' ' + b
+    const cur = pairs.get(key) ?? { from: a, to: b, kind: e.kind, confidence: 'high', n: 0 }
+    cur.n++
+    if (e.kind === 'http') cur.kind = 'http'
+    pairs.set(key, cur)
+  }
+  return {
+    collapsed: true,
+    items: [...stat.entries()].map(([m, v]) => ({
+      id: m,
+      label: m.split('/').slice(-2).join('/') || m,
+      sub: `${v.files}개 파일${v.locked ? ` · 🔒${v.locked}` : ''}`,
+      locked: v.locked > 0,
+      isEntry: v.entries > 0,
+      module: m,
+      isModule: true,
+    })),
+    edges: [...pairs.values()],
+  }
+}
+
+/** 이 수를 넘으면 전체 보기를 모듈로 접는다. */
+const COLLAPSE_AT = 80
 
 /**
  * 화면에 그릴 노드를 고른다.
@@ -544,7 +618,7 @@ function reduceCrossings(cols, order, edges) {
 function commonDir(list) {
   const count = {}
   for (const n of list) {
-    const d = n.id.split('/').slice(0, -1).join('/') || '/'
+    const d = n.module || n.id.split('/').slice(0, -1).join('/') || '/'
     count[d] = (count[d] ?? 0) + 1
   }
   const best = Object.entries(count).sort((a, b) => b[1] - a[1])[0]
@@ -606,9 +680,10 @@ document.addEventListener('click', async ev => {
   const featEl = ev.target.closest('[data-feature]')
   if (featEl) {
     activeFeature = featEl.dataset.feature
-    location.hash = activeFeature ? 'feature=' + encodeURIComponent(activeFeature) : ''
+    activeModule = ''
     zoom = 'fit'
     render()
+    writeHash()
     return
   }
 
@@ -617,6 +692,7 @@ document.addEventListener('click', async ev => {
     selected = nodeEl.dataset.node
     if (scope === 'near') zoom = 'fit'
     render()
+    writeHash()
     return
   }
 
@@ -647,11 +723,21 @@ document.addEventListener('click', async ev => {
     return
   }
 
+  if (ev.target.id === 'expand') { ev.preventDefault(); expandAll = true; zoom = 'fit'; render(); writeHash(); return }
+
   const seg = ev.target.closest('[data-scope]')
-  if (seg) { scope = seg.dataset.scope; zoom = 'fit'; render(); return }
+  if (seg) { scope = seg.dataset.scope; expandAll = false; zoom = 'fit'; render(); writeHash(); return }
 
   const modEl = ev.target.closest('[data-module]')
-  if (modEl) { activeModule = modEl.dataset.module; scope = 'module'; activeFeature = ''; zoom = 'fit'; render(); return }
+  if (modEl) {
+    activeModule = modEl.dataset.module
+    scope = 'module'
+    activeFeature = ''
+    zoom = 'fit'
+    render()
+    writeHash()
+    return
+  }
 
   if (ev.target.id === 'chk-empty') { showEmpty = ev.target.checked; drawGraph(); return }
   if (ev.target.id === 'btn-fit') { zoom = 'fit'; drawGraph(); return }
@@ -670,8 +756,25 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 const trunc = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s
 
 function readHash() {
-  const m = /feature=([^&]+)/.exec(location.hash)
-  activeFeature = m ? decodeURIComponent(m[1]) : ''
+  const q = new URLSearchParams(location.hash.replace(/^#/, ''))
+  activeFeature = q.get('feature') ?? ''
+  activeModule = q.get('module') ?? ''
+  if (q.get('scope')) scope = q.get('scope')
+  else if (activeModule) scope = 'module'
+  expandAll = q.get('expand') === '1'
+  selected = q.get('file') ?? null
+}
+
+/** 지금 보고 있는 상태를 주소에 남긴다. 새로고침해도 유지되고 링크로 공유된다. */
+function writeHash() {
+  const q = new URLSearchParams()
+  if (activeFeature) q.set('feature', activeFeature)
+  else if (scope !== 'near') q.set('scope', scope)
+  if (activeModule && scope === 'module') q.set('module', activeModule)
+  if (expandAll) q.set('expand', '1')
+  if (selected) q.set('file', selected)
+  const next = q.toString()
+  if (next !== location.hash.replace(/^#/, '')) history.replaceState(null, '', next ? '#' + next : ' ')
 }
 addEventListener('hashchange', () => { readHash(); zoom = 'fit'; render() })
 readHash()
