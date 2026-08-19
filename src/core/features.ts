@@ -27,7 +27,10 @@ export function computeFeatures(graph: Graph): Features {
   const members = new Map<string, Set<string>>()
   for (const e of entries) members.set(e.id, graph.reachable(e.file))
 
-  const roots = entries.filter(e => !entries.some(o => o.id !== e.id && members.get(o.id)!.has(e.file)))
+  // 다른 '파일'의 진입점에서 도달되면 흡수된다.
+  // 같은 파일을 비교 대상에 넣으면 안 된다. FastAPI 라우트 파일 하나에 핸들러가 열 개 있으면
+  // 열 개가 서로를 흡수해서 전부 사라진다. 실제로 그래서 기능이 1개로 줄어 있었다.
+  const roots = entries.filter(e => !entries.some(o => o.file !== e.file && members.get(o.id)!.has(e.file)))
 
   const owners = new Map<string, string[]>()
   const rootOwners = new Map<string, string[]>()

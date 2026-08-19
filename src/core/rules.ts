@@ -1,5 +1,6 @@
 import type { Graph } from './graph.ts'
 import { allFilesOf, autolockCandidates, exclusiveOf, featuresOf, type Features } from './features.ts'
+import { consumerModules, type Modules } from './modules.ts'
 
 export interface ProtectRule {
   path: string
@@ -28,7 +29,7 @@ export interface Rules {
   protect: ProtectRule[]
   features: FeatureRule[]
   layers: LayerRule[]
-  autolock: { minFeatures: number; mode: 'off' | 'ask' | 'block' }
+  autolock: { minFeatures: number; minModules: number; mode: 'off' | 'ask' | 'block' }
 }
 
 export const defaultRules = (): Rules => ({
@@ -36,7 +37,20 @@ export const defaultRules = (): Rules => ({
   protect: [],
   features: [],
   layers: [],
-  autolock: { minFeatures: 3, mode: 'ask' },
+  autolock: { minFeatures: 3, minModules: 3, mode: 'ask' },
+})
+
+/**
+ * 아무것도 막지 않는 규칙.
+ * 설정 파일을 못 읽었을 때 기본값(ask)으로 넘어가면, 읽지도 못한 설정을 근거로
+ * 질문을 하기 시작한다. 판단 근거가 없으면 아무 주장도 하지 않아야 한다. (P4/P5)
+ */
+export const inertRules = (): Rules => ({
+  version: 1,
+  protect: [],
+  features: [],
+  layers: [],
+  autolock: { minFeatures: 3, minModules: 3, mode: 'off' },
 })
 
 export type Verdict =
@@ -62,7 +76,13 @@ export interface EditCheck {
  * P4: 확신 없는 근거로는 차단하지 않는다.
  * P5: 판단이 안 서면 allow. 막는 건 확실할 때만.
  */
-export function checkEdit(rules: Rules, graph: Graph, features: Features, edit: EditCheck): Verdict {
+export function checkEdit(
+  rules: Rules,
+  graph: Graph,
+  features: Features,
+  edit: EditCheck,
+  modules?: Modules,
+): Verdict {
   const file = norm(edit.file)
 
   // 1) 명시적 보호
@@ -112,8 +132,9 @@ export function checkEdit(rules: Rules, graph: Graph, features: Features, edit: 
     }
   }
 
-  // 4) 자동 잠금 (여러 기능이 공유하는 파일)
+  // 4) 자동 잠금
   if (rules.autolock.mode !== 'off') {
+    // 4-a) 여러 기능이 공유 (사용자 관점)
     const feats = featuresOf(features, file)
     if (feats.length >= rules.autolock.minFeatures) {
       return {
@@ -121,6 +142,21 @@ export function checkEdit(rules: Rules, graph: Graph, features: Features, edit: 
         rule: `autolock: >=${rules.autolock.minFeatures} features`,
         reason: `기능 ${feats.length}개가 공유하는 파일입니다: ${feats.join(', ')}`,
         hint: extensionHint(graph, features, file),
+      }
+    }
+
+    // 4-b) 여러 모듈이 공유 (코드 관점).
+    //      진입점이 없는 라이브러리/CLI 에서는 이쪽만 신호를 낸다.
+    if (modules) {
+      const ms = consumerModules(graph, modules, file)
+      const min = rules.autolock.minModules ?? rules.autolock.minFeatures
+      if (ms.length >= min) {
+        return {
+          action: rules.autolock.mode,
+          rule: `autolock: >=${min} modules`,
+          reason: `모듈 ${ms.length}곳이 함께 쓰는 파일입니다: ${ms.slice(0, 4).join(', ')}${ms.length > 4 ? ' 외' : ''}`,
+          hint: extensionHint(graph, features, file),
+        }
       }
     }
   }

@@ -6,7 +6,8 @@ import YAML from 'yaml'
 import chokidar from 'chokidar'
 import { buildGraph, createCtx, listFiles, parseFile, adapterFor, type FileInfo } from '../index/scan.ts'
 import { computeFeatures, allFilesOf, autolockCandidates, exclusiveOf, featuresOf, type Features } from '../core/features.ts'
-import { checkEdit, defaultRules, findViolations, suggestRules, type Rules, type Verdict } from '../core/rules.ts'
+import { checkEdit, defaultRules, findViolations, inertRules, type Rules, type Verdict } from '../core/rules.ts'
+import { computeModules, consumerModules, crossModuleShared, type Modules } from '../core/modules.ts'
 import type { Graph } from '../core/graph.ts'
 import type { ResolveCtx } from '../core/ir.ts'
 
@@ -27,6 +28,7 @@ export class Daemon {
   files = new Map<string, FileInfo>()
   graph!: Graph
   features!: Features
+  modules!: Modules
   rules: Rules = defaultRules()
   activity: Activity[] = []
   /** 우리 루트 밖에서 들어온 요청 수. 0 이 아니면 포트 설정이 잘못된 것이다. */
@@ -85,6 +87,7 @@ export class Daemon {
   private rebuild() {
     this.graph = buildGraph(this.files, this.ctx, this.repoRoot)
     this.features = computeFeatures(this.graph)
+    this.modules = computeModules(this.graph, id => this.files.get(id)?.projectRoot ?? '.')
   }
 
   private startWatching() {
@@ -116,7 +119,8 @@ export class Daemon {
       }
     } catch {
       // P5: 룰 파일이 깨져도 데몬은 산다. 대신 아무것도 막지 않는다.
-      this.rules = defaultRules()
+      // 기본값으로 되돌리면 읽지도 못한 설정을 근거로 질문하기 시작한다.
+      this.rules = inertRules()
     }
   }
 
@@ -167,7 +171,7 @@ export class Daemon {
         const adapter = this.files.get(from)?.adapter ?? adapterFor(from)
         return adapter?.resolve(spec, from, this.ctx)?.path ?? null
       },
-    })
+    }, this.modules)
     this.log({ at: Date.now(), file, action: verdict.action, tool, ...(verdict.action !== 'allow' ? { reason: verdict.reason, rule: verdict.rule } : {}) })
     return verdict
   }
@@ -214,14 +218,29 @@ export class Daemon {
         id: n.id,
         lang: n.lang,
         features: featuresOf(this.features, n.id),
+        module: this.modules.of.get(n.id) ?? '',
         symbols: n.symbols.length,
         locked: locked.has(n.id),
         isEntry: this.features.entries.some(e => e.file === n.id),
       })),
       edges: this.graph.edges.map(e => ({ from: e.from, to: e.to, kind: e.kind, confidence: e.confidence, via: e.via })),
-      suggestions: autolockCandidates(this.features, this.rules.autolock.minFeatures)
-        .filter(c => !locked.has(c.file))
-        .map(c => ({ file: c.file, features: c.features })),
+      modules: [...this.modules.members.entries()]
+        .map(([name, fs]) => ({ name, files: fs.length }))
+        .sort((a, b) => b.files - a.files || (a.name < b.name ? -1 : 1)),
+      suggestions: [
+        ...autolockCandidates(this.features, this.rules.autolock.minFeatures).map(c => ({
+          file: c.file,
+          why: c.features,
+          kind: 'feature' as const,
+        })),
+        ...crossModuleShared(this.graph, this.modules, this.rules.autolock.minModules ?? 3).map(c => ({
+          file: c.file,
+          why: c.modules,
+          kind: 'module' as const,
+        })),
+      ]
+        .filter((c, i, arr) => !locked.has(c.file) && arr.findIndex(x => x.file === c.file) === i)
+        .slice(0, 40),
       violations: findViolations(this.rules, this.graph),
       unresolved: this.graph.unresolved,
       rules: this.rules,

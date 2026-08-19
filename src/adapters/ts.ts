@@ -87,13 +87,33 @@ export const tsAdapter: LangAdapter = {
     return found ? { path: found, confidence: 'high' } : null
   },
 
-  /** Next.js app router: 파일 경로가 곧 라우트. 파싱 불필요. */
+  /** 파일 경로가 곧 라우트인 프레임워크들. 파싱 불필요. */
   routeFromPath(rel, projectRoot) {
-    const inProject = rel.slice(projectRoot.length + 1)
-    const m = /^app\/(.*\/)?page\.(tsx|ts|jsx|js)$/.exec(inProject)
-    if (!m) return null
-    const segs = (m[1] ?? '').split('/').filter(Boolean).filter(s => !/^\(.*\)$/.test(s))
-    return { method: 'PAGE', path: '/' + segs.join('/'), owner: '', line: 1 } satisfies RouteDecl
+    const inProject = projectRoot === '.' ? rel : rel.slice(projectRoot.length + 1)
+
+    // Next.js app router: app/**/page.tsx
+    const next = /^(?:src\/)?app\/(.*\/)?page\.(tsx|ts|jsx|js)$/.exec(inProject)
+    if (next) return page(segments(next[1]))
+
+    // Next.js pages router: pages/**/*.tsx
+    const pages = /^(?:src\/)?pages\/(.+)\.(tsx|ts|jsx|js)$/.exec(inProject)
+    if (pages && !pages[1].startsWith('api/') && !/(^|\/)_/.test(pages[1])) {
+      return page(segments(pages[1].replace(/\/?index$/, '')))
+    }
+
+    // TanStack Router / SvelteKit 류: routes/**/*.tsx
+    const routes = /^(?:src\/)?routes\/(.+)\.(tsx|ts|jsx|js)$/.exec(inProject)
+    if (routes) {
+      const raw = routes[1]
+      // __root, routeTree.gen 은 라우트가 아니다
+      if (/^__/.test(raw.split('/').pop() ?? '') || raw.endsWith('.gen')) return null
+      // _layout 처럼 밑줄로 시작하는 조각은 경로에 안 나타난다 (pathless)
+      const segs = segments(raw.replace(/\/?index$/, ''))
+        .filter(x => !x.startsWith('_'))
+      return page(segs)
+    }
+
+    return null
   },
 }
 
@@ -152,6 +172,17 @@ function enclosingSymbol(node: Node): string | undefined {
   }
   return outermost
 }
+
+/** 라우트 그룹 `(marketing)` 은 URL 에 안 나타난다. */
+const segments = (raw?: string) =>
+  (raw ?? '').split('/').filter(Boolean).filter(s => !/^\(.*\)$/.test(s))
+
+const page = (segs: string[]): RouteDecl => ({
+  method: 'PAGE',
+  path: '/' + segs.join('/'),
+  owner: '',
+  line: 1,
+})
 
 function matchAlias(pattern: string, spec: string): string | null {
   const star = pattern.indexOf('*')

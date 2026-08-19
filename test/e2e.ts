@@ -128,6 +128,29 @@ eq('단일 기능 파일은 그대로 통과', decision(await pre('web/component
 setRules('version: 1\nprotect: []\nlayers: []\nautolock: { minFeatures: 3, mode: block }\n')
 eq('block 모드면 차단', decision(await pre('web/lib/money.ts')), 'deny')
 
+// ---------------------------------------------------------------- 모듈 기반 자동 잠금
+
+console.log('\n[모듈 기반 자동 잠금]')
+// 진입점이 없는 프로젝트에서도 신호가 나와야 한다. 여기가 라이브러리/CLI 를 살리는 부분.
+setRules(`version: 1
+protect: []
+features: []
+layers: []
+autolock: { minFeatures: 99, minModules: 2, mode: block }
+`)
+const byModule = await pre('api/services/money.py')
+eq('여러 모듈이 쓰는 파일은 차단', decision(byModule), 'deny')
+ok('모듈 개수를 알려준다', /모듈 \d+곳/.test(reason(byModule)), reason(byModule))
+eq('한 모듈만 쓰는 파일은 통과', decision(await pre('web/components/PriceRow.tsx')), 'allow')
+
+setRules(`version: 1
+protect: []
+features: []
+layers: []
+autolock: { minFeatures: 99, minModules: 99, mode: block }
+`)
+eq('기준을 올리면 아무것도 안 막는다', decision(await pre('api/services/money.py')), 'allow')
+
 // ---------------------------------------------------------------- 안전장치 (P4/P5)
 
 console.log('\n[안전장치]')

@@ -209,7 +209,8 @@ function render() {
     ? S.suggestions.map(s => `
       <div class="card">
         <div class="path">${esc(s.file)}</div>
-        <div>${s.features.map(f => `<span class="badge">${esc(shortFeature(f))}</span>`).join('')}</div>
+        <div>${s.why.map(f => `<span class="badge">${esc(shortFeature(f))}</span>`).join('')}</div>
+        <div class="hint" style="margin:4px 0 0">${s.kind === 'module' ? '모듈 ' + s.why.length + '곳이 함께 씁니다' : '기능 ' + s.why.length + '개가 함께 씁니다'}</div>
         <div class="row" style="margin-top:8px">
           <button class="small danger" data-lock="${esc(s.file)}">잠그기</button>
         </div>
@@ -410,7 +411,7 @@ function renderDetail() {
       ${top ? `<div class="card">
         <h2>가장 위험한 파일</h2>
         <div class="path">${esc(top.file)}</div>
-        <p class="hint" style="margin:6px 0 8px">기능 ${top.features.length}개가 함께 씁니다. 여기가 깨지면 ${top.features.length}곳이 한꺼번에 망가집니다.</p>
+        <p class="hint" style="margin:6px 0 8px">${top.kind === 'module' ? '모듈' : '기능'} ${top.why.length}곳이 함께 씁니다. 여기가 깨지면 ${top.why.length}곳이 한꺼번에 망가집니다.</p>
         <button class="small danger" data-lock="${esc(top.file)}">잠그기</button>
       </div>` : ''}
       ${S.violations.length ? `<div class="card warn"><h2>규칙 위반 ${S.violations.length}건</h2>
@@ -426,6 +427,7 @@ function renderDetail() {
       <div class="path" style="font-size:13px">${esc(selected)}</div>
       <div style="margin-top:7px">
         ${n.locked ? '<span class="badge lock">🔒 잠김</span>' : ''}
+        ${n.module ? `<span class="badge">${esc(n.module)}</span>` : ''}
         ${n.features.map(f => `<span class="badge">${esc(shortFeature(f))}</span>`).join('') || '<span class="badge">어느 기능에도 안 쓰임</span>'}
       </div>
       <div class="row" style="margin-top:10px">

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "repomix",
+    "url": "https://github.com/yamadashy/repomix.git",
+    "shape": "TS CLI / 라이브러리",
+    "why": "라우트도 페이지도 없는 형태. 기능 모델이 제일 취약한 곳"
+  },
+  {
+    "name": "fastapi-fullstack",
+    "url": "https://github.com/fastapi/full-stack-fastapi-template.git",
+    "shape": "FastAPI + React",
+    "why": "우리가 노리는 정확한 형태. FE-BE 경계가 실제로 있음"
+  },
+  {
+    "name": "flask",
+    "url": "https://github.com/pallets/flask.git",
+    "shape": "Python 라이브러리",
+    "why": "순수 파이썬. 데코레이터 라우트가 예제에만 있는 경우"
+  },
+  {
+    "name": "precedent",
+    "url": "https://github.com/steven-tey/precedent.git",
+    "shape": "Next.js App Router",
+    "why": "우리 픽스처가 흉내낸 실제 형태"
+  },
+  {
+    "name": "express",
+    "url": "https://github.com/expressjs/express.git",
+    "shape": "CommonJS 라이브러리",
+    "why": "require() 기반. ESM 아닌 코드에서 무너지는지"
+  }
+]
