@@ -28,26 +28,38 @@ export interface ScanResult {
   ms: number
 }
 
-export async function scan(repoRoot: string): Promise<ScanResult> {
-  const t0 = performance.now()
-  const rels = walk(repoRoot)
-  const ctx = makeCtx(repoRoot)
+export type { FileInfo }
 
-  // 1) 파싱
-  const files = new Map<string, FileInfo>()
-  for (const rel of rels) {
-    const adapter = ADAPTERS.find(a => a.exts.includes(path.extname(rel)))
-    if (!adapter) continue
+/** 이 경로를 우리가 다루는가 */
+export function adapterFor(rel: string) {
+  return ADAPTERS.find(a => a.exts.includes(path.extname(rel)))
+}
+
+export function listFiles(repoRoot: string): string[] {
+  return walk(repoRoot).filter(r => adapterFor(r))
+}
+
+/** 파일 하나 파싱. 실패하면 null (P5: 못 읽은 파일에 대해서는 아무 주장도 하지 않는다). */
+export async function parseFile(repoRoot: string, rel: string, ctx: ResolveCtx): Promise<FileInfo | null> {
+  const adapter = adapterFor(rel)
+  if (!adapter) return null
+  try {
     const src = fs.readFileSync(path.join(repoRoot, rel), 'utf8')
-    let parsed: ParseResult
-    try {
-      parsed = await adapter.parse(src, rel)
-    } catch {
-      continue // P5: 파싱 실패는 조용히 건너뛴다. 그 파일에 대해 아무 주장도 하지 않는다.
-    }
-    files.set(rel, { rel, adapter, projectRoot: ctx.projectRootOf(rel), parsed })
+    return { rel, adapter, projectRoot: ctx.projectRootOf(rel), parsed: await adapter.parse(src, rel) }
+  } catch {
+    return null
   }
+}
 
+export function createCtx(repoRoot: string): ResolveCtx {
+  return makeCtx(repoRoot)
+}
+
+/**
+ * 파싱 결과들로 그래프를 만든다. I/O 없이 순수 계산이라 파일 하나 바뀔 때 다시 돌려도 싸다.
+ * (파싱만 증분으로 하고 빌드는 통째로 다시 하는 게 훨씬 단순하고 충분히 빠르다)
+ */
+export function buildGraph(files: Map<string, FileInfo>, ctx: ResolveCtx): Graph {
   const graph = new Graph()
   for (const f of files.values()) {
     graph.addNode({ id: f.rel, lang: f.adapter.name, symbols: f.parsed.symbols })
@@ -83,7 +95,18 @@ export async function scan(repoRoot: string): Promise<ScanResult> {
   // 4) FE -> BE 경계
   linkHttpCalls(graph, files)
 
-  return { graph, files, ms: performance.now() - t0 }
+  return graph
+}
+
+export async function scan(repoRoot: string): Promise<ScanResult> {
+  const t0 = performance.now()
+  const ctx = makeCtx(repoRoot)
+  const files = new Map<string, FileInfo>()
+  for (const rel of listFiles(repoRoot)) {
+    const info = await parseFile(repoRoot, rel, ctx)
+    if (info) files.set(rel, info)
+  }
+  return { graph: buildGraph(files, ctx), files, ms: performance.now() - t0 }
 }
 
 // ---------------------------------------------------------------- 라우트 합성

@@ -7,9 +7,12 @@
     "codyssey": "./dist/cli.js"
   },
   "scripts": {
-    "dev": "node --experimental-strip-types src/cli.ts",
-    "build": "tsc -p .",
-    "test": "node --experimental-strip-types test/run.ts"
+    "init": "node --experimental-strip-types src/cli.ts init",
+    "start": "node --experimental-strip-types src/cli.ts start",
+    "scan": "node --experimental-strip-types src/cli.ts scan",
+    "status": "node --experimental-strip-types src/cli.ts status",
+    "test": "node --experimental-strip-types test/run.ts && node --experimental-strip-types test/e2e.ts",
+    "build": "tsc -p ."
   },
   "dependencies": {
     "chokidar": "^4.0.3",
@@ -20,5 +23,6 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0"
-  }
+  },
+  "description": "Architecture guardrails for AI coding agents - blocks edits that break your architecture. Static analysis, zero LLM calls."
 }

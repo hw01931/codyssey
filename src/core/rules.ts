@@ -1,0 +1,207 @@
+import type { Graph } from './graph.ts'
+import { autolockCandidates, featuresOf, type Features } from './features.ts'
+
+export interface ProtectRule {
+  path: string
+  reason?: string
+}
+
+export interface LayerRule {
+  /** "web/components/** -> web/lib/api.ts" */
+  deny: string
+  reason?: string
+}
+
+export interface Rules {
+  version: number
+  protect: ProtectRule[]
+  layers: LayerRule[]
+  autolock: { minFeatures: number; mode: 'off' | 'ask' | 'block' }
+}
+
+export const defaultRules = (): Rules => ({
+  version: 1,
+  protect: [],
+  layers: [],
+  autolock: { minFeatures: 3, mode: 'ask' },
+})
+
+export type Verdict =
+  | { action: 'allow' }
+  | { action: 'ask' | 'block'; reason: string; hint?: string; rule: string }
+
+export interface EditCheck {
+  /** 레포 루트 기준 상대경로 */
+  file: string
+  /** 이 편집으로 새로 들어가는 텍스트 (import 검사용). 없으면 import 검사는 건너뛴다. */
+  added?: string
+  /**
+   * import spec 을 실제 파일 경로로 바꾼다.
+   * 규칙은 실제 경로(`web/lib/api.ts`)로 쓰는데 코드는 별칭(`@/lib/api`)으로 쓰기 때문에
+   * 해석 없이는 둘이 절대 안 만난다.
+   */
+  resolve?: (spec: string, fromFile: string) => string | null
+}
+
+/**
+ * 편집 한 건에 대한 판정. 훅이 5ms 안에 답해야 하므로 그래프는 이미 메모리에 있다고 가정한다.
+ *
+ * P4: 확신 없는 근거로는 차단하지 않는다.
+ * P5: 판단이 안 서면 allow. 막는 건 확실할 때만.
+ */
+export function checkEdit(rules: Rules, graph: Graph, features: Features, edit: EditCheck): Verdict {
+  const file = norm(edit.file)
+
+  // 1) 명시적 보호
+  for (const p of rules.protect) {
+    if (!matches(p.path, file)) continue
+    return {
+      action: 'block',
+      rule: `protect: ${p.path}`,
+      reason: p.reason ?? '보호된 파일입니다.',
+      hint: extensionHint(graph, features, file),
+    }
+  }
+
+  // 2) 레이어 위반 (이 편집이 새로 들여오는 import 만 본다)
+  if (edit.added) {
+    for (const spec of importSpecs(edit.added)) {
+      const resolved = edit.resolve?.(spec, file) ?? null
+      for (const l of rules.layers) {
+        const arrow = splitArrow(l.deny)
+        if (!arrow) continue
+        if (!matches(arrow.from, file)) continue
+        const hit = resolved ? matches(arrow.to, resolved) : specMatches(arrow.to, spec)
+        if (!hit) continue
+        return {
+          action: 'block',
+          rule: `layers: ${l.deny}`,
+          reason: l.reason ?? `${arrow.from} 에서 ${arrow.to} 를 import 할 수 없습니다.`,
+          hint: `'${spec}' import 를 제거하거나, 상위 계층에서 값을 내려받으세요.`,
+        }
+      }
+    }
+  }
+
+  // 3) 자동 잠금 (여러 기능이 공유하는 파일)
+  if (rules.autolock.mode !== 'off') {
+    const feats = featuresOf(features, file)
+    if (feats.length >= rules.autolock.minFeatures) {
+      return {
+        action: rules.autolock.mode,
+        rule: `autolock: >=${rules.autolock.minFeatures} features`,
+        reason: `기능 ${feats.length}개가 공유하는 파일입니다: ${feats.join(', ')}`,
+        hint: extensionHint(graph, features, file),
+      }
+    }
+  }
+
+  return { action: 'allow' }
+}
+
+/** 그래프 전체에 대한 레이어 위반 목록. UI/CI 에서 쓴다. */
+export function findViolations(rules: Rules, graph: Graph) {
+  const out: { from: string; to: string; rule: string; reason: string }[] = []
+  for (const e of graph.edges) {
+    if (e.kind !== 'import') continue
+    for (const l of rules.layers) {
+      const arrow = splitArrow(l.deny)
+      if (!arrow) continue
+      if (matches(arrow.from, e.from) && matches(arrow.to, e.to)) {
+        out.push({ from: e.from, to: e.to, rule: l.deny, reason: l.reason ?? '레이어 위반' })
+      }
+    }
+  }
+  return out.sort((a, b) => (a.from + a.to < b.from + b.to ? -1 : 1))
+}
+
+/** rules.yaml 초안. 사람은 이걸 지우거나 주석 해제만 하면 된다. */
+export function suggestRules(features: Features, minFeatures = 3): Rules {
+  const r = defaultRules()
+  r.protect = autolockCandidates(features, minFeatures).map(c => ({
+    path: c.file,
+    reason: `기능 ${c.features.length}개가 공유: ${c.features.join(', ')}`,
+  }))
+  return r
+}
+
+// ---------------------------------------------------------------- 내부
+
+/** 배럴/빈 파일은 대안이 될 수 없다. */
+const IS_BARREL = /(^|\/)(__init__\.py|index\.(ts|tsx|js|jsx))$/
+
+/**
+ * 대안 경로 제안: 같은 폴더에서 '실제 내용이 있고 기능 하나만 쓰는' 파일로 유도한다.
+ * 엉뚱한 걸 제안하느니 아무 말도 안 하는 게 낫다. (P4)
+ */
+function extensionHint(graph: Graph, features: Features, file: string): string | undefined {
+  const dir = file.slice(0, file.lastIndexOf('/') + 1)
+  const free = [...graph.nodes.values()]
+    .filter(
+      n =>
+        n.id.startsWith(dir) &&
+        n.id !== file &&
+        !IS_BARREL.test(n.id) &&
+        n.symbols.length > 0 &&
+        featuresOf(features, n.id).length === 1,
+    )
+    .map(n => n.id)
+    .sort()
+  if (!free.length) return undefined
+  return `대신 고칠 수 있는 이웃 파일: ${free.slice(0, 3).join(', ')}`
+}
+
+/** 새로 추가된 텍스트에서 import spec 을 뽑는다. 정규식으로 충분하다 - 확신 없으면 안 막으니까. */
+function importSpecs(text: string): string[] {
+  const out = new Set<string>()
+  const patterns = [
+    /\bfrom\s+['"]([^'"]+)['"]/g, // js: from 'x'
+    /\bimport\s+['"]([^'"]+)['"]/g, // js: import 'x'
+    /\brequire\(\s*['"]([^'"]+)['"]\s*\)/g,
+    /^\s*from\s+([\w.]+)\s+import\b/gm, // py: from a.b import c
+    /^\s*import\s+([\w.]+)/gm, // py: import a.b
+  ]
+  for (const re of patterns) for (const m of text.matchAll(re)) out.add(m[1])
+  return [...out]
+}
+
+function splitArrow(deny: string): { from: string; to: string } | null {
+  const i = deny.indexOf('->')
+  if (i < 0) return null
+  return { from: deny.slice(0, i).trim(), to: deny.slice(i + 2).trim() }
+}
+
+/** import spec 은 경로가 아니라 별칭일 수 있어서 끝부분 일치도 허용한다. */
+function specMatches(pattern: string, spec: string): boolean {
+  const p = norm(pattern).replace(/\.(ts|tsx|js|jsx|py)$/, '')
+  const s = norm(spec).replace(/\.(ts|tsx|js|jsx|py)$/, '').replace(/\./g, '/')
+  if (matches(pattern, spec)) return true
+  return s.endsWith(p) || p.endsWith(s)
+}
+
+const globCache = new Map<string, RegExp>()
+
+/** glob 매칭. `**` 는 경로 구분자 포함, `*` 는 한 세그먼트. P7: 컴파일 캐시. */
+export function matches(pattern: string, target: string): boolean {
+  const p = norm(pattern)
+  const t = norm(target)
+  if (p === t) return true
+  let re = globCache.get(p)
+  if (!re) {
+    const body = p
+      .split('**')
+      .map(part =>
+        part
+          .split('*')
+          .map(x => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+          .join('[^/]*'),
+      )
+      .join('.*')
+    // 디렉토리 패턴(끝이 / 인 경우)은 하위 전체를 뜻한다
+    re = new RegExp('^' + body + (p.endsWith('/') ? '.*' : '') + '$')
+    globCache.set(p, re)
+  }
+  return re.test(t)
+}
+
+const norm = (p: string) => p.replace(/\\/g, '/').replace(/^\.\//, '')

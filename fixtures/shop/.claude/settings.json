@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:7777/pre",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://127.0.0.1:7777/post",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}
