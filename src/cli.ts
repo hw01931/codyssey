@@ -10,6 +10,7 @@ import { health, resolvePort, samePath, savePort } from './setup/port.ts'
 import { doctor } from './setup/doctor.ts'
 import { runMcp } from './mcp/server.ts'
 import { archDiff, renderDiff, shouldFail } from './setup/archdiff.ts'
+import { architectureMd, terminalMap, type ReportInput } from './render/report.ts'
 import { Daemon as _D } from './daemon/server.ts'
 
 const [, , cmd = 'help', ...rest] = process.argv
@@ -39,6 +40,7 @@ switch (cmd) {
   case 'doctor': await cmdDoctor(); break
   case 'mcp': await runMcp(path.resolve(root), explicitPort); break
   case 'diff': await cmdDiff(); break
+  case 'map': await cmdMap(); break
   case 'scan': await cmdScan(); break
   case 'status': await cmdStatus(); break
   case 'impact': await cmdImpact(positional[0]); break
@@ -54,6 +56,7 @@ ${C.b('CODYSSEY')} ${C.dim('- AI 가 구조를 깨뜨리지 않게 지켜주는 
   ${C.dim('codyssey ensure')}          꺼져 있으면 조용히 띄우기 (훅이 자동 호출)
   ${C.b('codyssey doctor')}          설정이 제대로 됐는지 점검
   ${C.dim('codyssey mcp')}             MCP 서버 (에이전트가 구조를 물어볼 창구)
+  ${C.b('codyssey map')}             터미널에 구조 그리기 (브라우저 없이)
   ${C.b('codyssey diff')} <기준>      기준 커밋 대비 아키텍처가 어떻게 바뀌었나
   ${C.dim('codyssey scan')}            구조 파일만 만들기
   ${C.dim('codyssey status')}          터미널에 요약 출력
@@ -181,12 +184,32 @@ async function cmdDiff() {
   if (has('fail-on-violation') && shouldFail(d)) process.exitCode = 1
 }
 
+/** 브라우저 없이 쓰는 산출물들의 공통 입력 */
+async function reportInput(): Promise<ReportInput> {
+  const d = new _D(root, 0)
+  await d.fullScan()
+  d.loadRules()
+  return {
+    graph: d.graph,
+    features: d.features,
+    modules: d.modules,
+    lockedFiles: d.lockedFiles(),
+    minModules: d.rules.autolock.minModules ?? 3,
+  }
+}
+
+async function cmdMap() {
+  console.log()
+  console.log(terminalMap(await reportInput(), !has('no-color')))
+  console.log()
+}
+
 async function cmdScan() {
   const { graph, files, ms } = await scan(root)
   const dir = path.join(root, '.codyssey')
   fs.mkdirSync(dir, { recursive: true })
   fs.writeFileSync(path.join(dir, 'graph.json'), JSON.stringify(graph.toJSON(), null, 2) + '\n')
-  fs.writeFileSync(path.join(dir, 'ARCHITECTURE.md'), renderArchitecture(graph))
+  fs.writeFileSync(path.join(dir, 'ARCHITECTURE.md'), architectureMd(await reportInput()))
   console.log(
     `${files.size}개 파일 -> 노드 ${graph.nodes.size}, 연결 ${graph.edges.length}, 진입점 ${graph.entries.size}  (${ms.toFixed(0)}ms)`,
   )
@@ -246,26 +269,4 @@ async function cmdImpact(file?: string) {
   console.log(`\n이 파일을 쓰는 곳 ${deps.length}개`)
   for (const d of deps) console.log(`  ${d}`)
   console.log()
-}
-
-/** P8: 정렬 고정. 코드가 안 바뀌면 이 파일도 안 바뀐다 -> diff 노이즈 0. */
-function renderArchitecture(graph: Graph): string {
-  const feat = computeFeatures(graph)
-  const L: string[] = ['# Architecture', '', '> codyssey 자동 생성. 직접 수정하지 말 것.', '']
-
-  L.push('## 기능 (최상위 진입점)', '')
-  for (const e of feat.roots) L.push(`- \`${e.id}\` - ${e.file} (${feat.members.get(e.id)!.size} files)`)
-
-  const locks = autolockCandidates(feat, 3)
-  if (locks.length) {
-    L.push('', '## 공유 모듈 (잠금 후보)', '')
-    for (const c of locks) L.push(`- \`${c.file}\` - ${c.features.length} features: ${c.features.join(', ')}`)
-  }
-
-  const http = graph.edges.filter(e => e.kind === 'http')
-  if (http.length) {
-    L.push('', '## FE -> BE', '')
-    for (const e of http) L.push(`- \`${e.via}\`: ${e.from} -> ${e.to} (${e.confidence})`)
-  }
-  return L.join('\n') + '\n'
 }

@@ -53,7 +53,12 @@ export async function init(repoRoot: string, requestedPort?: number): Promise<In
   if (registerMcp(root, port)) wrote.push('.mcp.json')
   else skipped.push('.mcp.json (이미 있음)')
 
-  // 4) gitignore
+  // 4) 커밋할 때 구조도를 자동 갱신하는 git 훅
+  const hookMsg = installGitHook(root)
+  if (hookMsg === 'wrote') wrote.push('.git/hooks/pre-commit')
+  else if (hookMsg) skipped.push(`.git/hooks/pre-commit (${hookMsg})`)
+
+  // 5) gitignore
   if (ensureGitignore(root)) wrote.push('.gitignore')
 
   return {
@@ -211,6 +216,37 @@ function mcpEntry(port: number) {
       ? ['--experimental-strip-types', entry.split(path.sep).join('/'), 'mcp', '--port', String(port)]
       : ['-y', 'codyssey', 'mcp', '--port', String(port)],
   }
+}
+
+/**
+ * 커밋할 때마다 .codyssey/ARCHITECTURE.md 를 다시 만들어 같이 커밋한다.
+ * 그러면 GitHub 에서 아무것도 안 띄우고 최신 구조도를 볼 수 있다.
+ *
+ * 이미 pre-commit 훅이 있으면 절대 덮어쓰지 않는다. 남의 훅을 날리면 안 된다.
+ */
+function installGitHook(root: string): 'wrote' | string | null {
+  const dir = path.join(root, '.git', 'hooks')
+  if (!fs.existsSync(path.join(root, '.git'))) return null
+  const p = path.join(dir, 'pre-commit')
+  if (fs.existsSync(p)) {
+    const cur = fs.readFileSync(p, 'utf8')
+    return cur.includes('codyssey') ? '이미 설정됨' : '이미 다른 훅이 있음'
+  }
+  const entry = fileURLToPath(new URL('../cli.ts', import.meta.url))
+  const cmd = fs.existsSync(entry)
+    ? `node --experimental-strip-types "${entry.split(path.sep).join('/')}" scan`
+    : 'npx -y codyssey scan'
+  const script = [
+    '#!/bin/sh',
+    '# codyssey - 커밋할 때 구조도를 최신으로 유지합니다.',
+    '# 이 훅이 싫으면 이 파일을 지우세요. 실패해도 커밋은 막지 않습니다.',
+    `${cmd} >/dev/null 2>&1 || exit 0`,
+    'git add .codyssey/ARCHITECTURE.md 2>/dev/null || true',
+    '',
+  ].join('\n')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(p, script, { mode: 0o755 })
+  return 'wrote'
 }
 
 function ensureGitignore(root: string): boolean {
