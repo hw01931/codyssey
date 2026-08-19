@@ -59,14 +59,24 @@ eq('http 엣지 3개, 전부 high', http, [
 ])
 
 console.log('\n[기능 소속]')
-eq('최상위 기능은 페이지 3개 (BE 라우트는 흡수됨)', feat.roots.map(r => r.id), ['PAGE /admin', 'PAGE /checkout', 'PAGE /orders'])
+eq('최상위 기능 (FE 가 안 부르는 라우트는 독립 기능)', feat.roots.map(r => r.id), [
+  'GET /api/v1/admin/stats', // fetchStats 를 아무도 import 안 함 = 사실상 죽은 라우트
+  'PAGE /admin',
+  'PAGE /checkout',
+  'PAGE /orders',
+])
 eq('web/lib/money.ts = 3개 기능', featuresOf(feat, 'web/lib/money.ts'), ['PAGE /admin', 'PAGE /checkout', 'PAGE /orders'])
 eq('web/components/PriceRow.tsx = 1개 기능', featuresOf(feat, 'web/components/PriceRow.tsx'), ['PAGE /checkout'])
-eq(
-  'api/services/money.py 는 FE 기능까지 전파',
-  featuresOf(feat, 'api/services/money.py'),
-  ['PAGE /admin', 'PAGE /checkout', 'PAGE /orders'],
-)
+eq('api/services/money.py 는 FE 기능까지 전파', featuresOf(feat, 'api/services/money.py'), [
+  'GET /api/v1/admin/stats',
+  'PAGE /admin',
+  'PAGE /checkout',
+  'PAGE /orders',
+])
+eq('api/services/payment.py 는 결제 경로만', featuresOf(feat, 'api/services/payment.py'), [
+  'GET /api/v1/admin/stats',
+  'PAGE /checkout',
+])
 
 console.log('\n[자동 잠금 후보]')
 const locks = autolockCandidates(feat, 3).map(c => c.file)
@@ -75,14 +85,36 @@ eq('단일 기능 파일은 후보 아님', locks.includes('web/components/Price
 
 console.log('\n[영향 반경]')
 eq(
-  'api/services/payment.py 변경 -> FE 페이지까지',
+  'api/services/payment.py 변경 -> 결제 페이지만',
   sorted(graph.dependents('api/services/payment.py')).filter(f => f.startsWith('web/app')),
-  ['web/app/admin/page.tsx', 'web/app/checkout/page.tsx', 'web/app/orders/page.tsx'],
+  ['web/app/checkout/page.tsx'],
 )
 eq(
   'confidence=high 만으로도 동일 (전부 high 엣지)',
   sorted(graph.dependents('api/services/payment.py', { minConfidence: 'high' })).length,
   sorted(graph.dependents('api/services/payment.py')).length,
+)
+
+console.log('\n[심볼 게이팅]')
+// lib/api.ts 한 파일에 fetch 3개가 있어도, 가져간 이름으로 걸러 실제 경로만 따라간다.
+const routesFrom = (f: string, gated: boolean) =>
+  [...graph.reachable(f, { gated })].filter(x => x.startsWith('api/routes')).sort()
+
+eq('OrderTable(fetchOrders) -> orders.py 하나', routesFrom('web/components/OrderTable.tsx', true), [
+  'api/routes/orders.py',
+])
+eq('checkout(createPayment) -> payments.py 하나', routesFrom('web/app/checkout/page.tsx', true), [
+  'api/routes/payments.py',
+])
+eq('게이팅 끄면 과대추정으로 복귀', routesFrom('web/components/OrderTable.tsx', false), [
+  'api/routes/admin.py',
+  'api/routes/orders.py',
+  'api/routes/payments.py',
+])
+eq(
+  '역방향도 게이팅됨',
+  sorted(graph.dependents('api/routes/payments.py')).filter(f => f.startsWith('web/app')),
+  ['web/app/checkout/page.tsx'],
 )
 
 console.log('\n[결정성]')

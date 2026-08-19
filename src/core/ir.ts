@@ -14,6 +14,11 @@ export interface ImportRef {
    * 양쪽 다 시도한다. 해석 실패해도 정상이므로 unresolved 로 기록하지 않는다. (P4)
    */
   speculative?: boolean
+  /**
+   * 이 import 로 실제로 가져온 이름들.  `import { fetchOrders } from './api'` => ['fetchOrders']
+   * undefined 면 전체 모듈을 가져온 것(default/namespace/side-effect)이라 게이팅하지 않는다.
+   */
+  names?: string[]
 }
 
 /** router 변수 선언.  py: APIRouter(prefix=..)  /  js: express.Router() */
@@ -26,7 +31,14 @@ export interface RouterMount { on: string; spec: string; attr: string; prefix: s
 export interface RouteDecl { method: string; path: string; owner: string; line: number }
 
 /** 나가는 HTTP 호출. FE→BE 경계를 잇는 유일한 단서. */
-export interface HttpCall { method: string; url: string; line: number; confidence: Confidence }
+export interface HttpCall {
+  method: string
+  url: string
+  line: number
+  confidence: Confidence
+  /** 이 호출을 감싼 최상위 심볼. 심볼 게이팅의 출발점이다. */
+  inSymbol?: string
+}
 
 export interface ParseResult {
   symbols: Sym[]

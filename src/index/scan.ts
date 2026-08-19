@@ -65,7 +65,14 @@ export async function scan(repoRoot: string): Promise<ScanResult> {
         continue
       }
       if (hit.path === f.rel || !files.has(hit.path)) continue
-      graph.addEdge({ from: f.rel, to: hit.path, kind: 'import', confidence: hit.confidence, line: imp.line })
+      graph.addEdge({
+        from: f.rel,
+        to: hit.path,
+        kind: 'import',
+        confidence: hit.confidence,
+        line: imp.line,
+        names: imp.names,
+      })
     }
   }
 
@@ -157,6 +164,7 @@ function linkHttpCalls(graph: Graph, files: Map<string, FileInfo>) {
           confidence: call.confidence === 'high' && m === 'exact' ? 'high' : 'low',
           via: route.id,
           line: call.line,
+          fromSymbol: call.inSymbol,
         })
       }
     }
