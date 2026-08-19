@@ -239,6 +239,49 @@ ok(
   `checkout=${state.features.find((f: any) => f.id === 'PAGE /checkout')?.exclusive}`,
 )
 
+// ---------------------------------------------------------------- 컨텍스트 주입
+
+console.log('\n[AI 에게 미리 알려주기]')
+setRules(`version: 1
+protect:
+  - path: api/services/payment.py
+    reason: 결제 코어
+features: []
+layers: []
+autolock: { minFeatures: 3, minModules: 3, mode: ask }
+`)
+const hook = (p: string, body: unknown) =>
+  fetch(`${BASE}${p}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(r => r.json() as Promise<any>)
+const ctx = (r: any) => r?.hookSpecificOutput?.additionalContext ?? ''
+
+const firstLineOf = (s: string) => s.split(String.fromCharCode(10))[1] ?? ''
+
+const brief = ctx(await hook('/session', { session_id: 'a' }))
+ok('세션 시작에 기능 목록을 넣는다', brief.includes('기능 4개'), firstLineOf(brief))
+ok('잠긴 파일을 알려준다', brief.includes('api/services/payment.py'))
+ok('짧다 (600자 미만)', brief.length < 600, `${brief.length}자`)
+
+eq('관련 없는 프롬프트에는 아무것도 안 넣는다', ctx(await hook('/prompt', { session_id: 'a', prompt: '오늘 날씨 어때' })), '')
+const p1 = ctx(await hook('/prompt', { session_id: 'a', prompt: 'payment.py 에 환불 추가해' }))
+ok('언급된 파일의 영향 범위를 넣는다', p1.includes('api/services/payment.py') && p1.includes('영향 기능'), firstLineOf(p1))
+eq('같은 이야기를 두 번 넣지 않는다', ctx(await hook('/prompt', { session_id: 'a', prompt: 'payment.py 에 환불 추가해' })), '')
+
+// 편집 뒤 연결 변화만 알린다
+const NL = String.fromCharCode(10)
+const badge = path.join(tmp, 'web/components/Badge2.tsx')
+fs.writeFileSync(badge, `export function Badge2(){ return null }${NL}`)
+await daemon.reindex('web/components/Badge2.tsx')
+fs.writeFileSync(badge, `import { formatMoney } from '@/lib/money'${NL}export function Badge2(){ return formatMoney(1) }${NL}`)
+const delta = ctx(await hook('/post', { tool_name: 'Edit', tool_input: { file_path: 'web/components/Badge2.tsx' } }))
+ok('새 연결이 생기면 알려준다', delta.includes('web/lib/money.ts'), delta.split(NL).join(' '))
+eq('연결이 안 바뀌면 침묵', ctx(await hook('/post', { tool_name: 'Edit', tool_input: { file_path: 'web/components/Badge2.tsx' } })), '')
+fs.rmSync(badge)
+await daemon.reindex('web/components/Badge2.tsx')
+
 // ---------------------------------------------------------------- 포트 충돌 (실제로 당한 버그)
 
 console.log('\n[포트 충돌 방어]')

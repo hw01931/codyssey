@@ -1,7 +1,7 @@
 {
   "name": "codyssey",
-  "version": "0.0.1",
-  "private": true,
+  "version": "0.1.0",
+  "private": false,
   "type": "module",
   "bin": {
     "codyssey": "./dist/cli.js"
@@ -12,8 +12,9 @@
     "scan": "node --experimental-strip-types src/cli.ts scan",
     "status": "node --experimental-strip-types src/cli.ts status",
     "test": "node --experimental-strip-types test/run.ts && node --experimental-strip-types test/e2e.ts",
-    "build": "tsc -p .",
-    "bench": "node --experimental-strip-types bench/run.ts"
+    "build": "node build.mjs",
+    "bench": "node --experimental-strip-types bench/run.ts",
+    "prepack": "node build.mjs"
   },
   "dependencies": {
     "chokidar": "^4.0.3",
@@ -23,7 +24,30 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.7.0"
   },
-  "description": "Architecture guardrails for AI coding agents - blocks edits that break your architecture. Static analysis, zero LLM calls."
+  "description": "Architecture guardrails for AI coding agents - blocks edits that break your architecture. Static analysis, zero LLM calls.",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "ai",
+    "claude-code",
+    "architecture",
+    "guardrails",
+    "static-analysis",
+    "tree-sitter",
+    "code-graph",
+    "mcp"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hw01931/codyssey.git"
+  }
 }

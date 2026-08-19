@@ -35,3 +35,4 @@ npm-debug.log*
 
 # 로컬 훅 설정 (실험용)
 .claude/settings.local.json
+dist/

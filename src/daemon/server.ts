@@ -10,6 +10,7 @@ import { checkEdit, defaultRules, findViolations, inertRules, type Rules, type V
 import { computeModules, consumerModules, crossModuleShared, type Modules } from '../core/modules.ts'
 import type { Graph } from '../core/graph.ts'
 import type { ResolveCtx } from '../core/ir.ts'
+import { deltaBrief, promptBrief, sessionBrief, snapshotEdges, type CtxInput } from './context.ts'
 
 const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui')
 
@@ -33,6 +34,8 @@ export class Daemon {
   activity: Activity[] = []
   /** 우리 루트 밖에서 들어온 요청 수. 0 이 아니면 포트 설정이 잘못된 것이다. */
   foreign = 0
+  /** 세션마다 이미 알려준 것. 같은 말을 두 번 하면 토큰만 쓴다. */
+  private told = new Map<string, Set<string>>()
   private ctx!: ResolveCtx
   private server?: http.Server
   private watcher?: chokidar.FSWatcher
@@ -181,6 +184,37 @@ export class Daemon {
     if (this.activity.length > 200) this.activity.length = 200
   }
 
+  /** 잠긴 파일 전체 (명시 잠금 + 기능 잠금) */
+  lockedFiles(): Set<string> {
+    const locked = new Set(this.rules.protect.map(p => p.path))
+    for (const fr of this.rules.features ?? []) {
+      const files = (fr.scope ?? 'exclusive') === 'all' ? allFilesOf(this.features, fr.id) : exclusiveOf(this.features, fr.id)
+      for (const f of files) locked.add(f)
+    }
+    return locked
+  }
+
+  private ctxInput(): CtxInput {
+    return {
+      graph: this.graph,
+      features: this.features,
+      modules: this.modules,
+      rules: this.rules,
+      lockedFiles: this.lockedFiles(),
+      port: this.port,
+    }
+  }
+
+  /** 이 세션에 같은 내용을 이미 넣었나. 중복 주입이 토큰을 제일 많이 먹는다. */
+  private isNew(session: string, key: string): boolean {
+    const set = this.told.get(session) ?? new Set<string>()
+    if (set.has(key)) return false
+    set.add(key)
+    if (set.size > 400) set.clear()
+    this.told.set(session, set)
+    return true
+  }
+
   toRel(p: string) {
     const abs = path.isAbsolute(p) ? p : path.join(this.repoRoot, p)
     return path.relative(this.repoRoot, abs).split(path.sep).join('/')
@@ -189,11 +223,7 @@ export class Daemon {
   // -------------------------------------------------------------- 상태
 
   state() {
-    const locked = new Set(this.rules.protect.map(p => p.path))
-    for (const fr of this.rules.features ?? []) {
-      const files = (fr.scope ?? 'exclusive') === 'all' ? allFilesOf(this.features, fr.id) : exclusiveOf(this.features, fr.id)
-      for (const f of files) locked.add(f)
-    }
+    const locked = this.lockedFiles()
     return {
       repoRoot: this.repoRoot,
       counts: {
@@ -288,12 +318,41 @@ export class Daemon {
         })
       }
 
+      if (url.pathname === '/session' && req.method === 'POST') {
+        const body = await readJson(req)
+        const session = String(body.session_id ?? 'default')
+        this.told.delete(session)
+        const text = sessionBrief(this.ctxInput())
+        if (!text || !this.isNew(session, 'brief')) return send(200, {})
+        return send(200, {
+          hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: text },
+        })
+      }
+
+      if (url.pathname === '/prompt' && req.method === 'POST') {
+        const body = await readJson(req)
+        const session = String(body.session_id ?? 'default')
+        const text = promptBrief(this.ctxInput(), String(body.prompt ?? ''))
+        // 같은 파일 이야기를 매 턴 반복하지 않는다
+        if (!text || !this.isNew(session, text)) return send(200, {})
+        return send(200, {
+          hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: text },
+        })
+      }
+
       if (url.pathname === '/post' && req.method === 'POST') {
         const body = await readJson(req)
         const input = (body.tool_input ?? {}) as Record<string, unknown>
         const rel = this.toRel(String(input.file_path ?? ''))
-        if (rel && adapterFor(rel)) await this.reindex(rel)
-        return send(200, {})
+        if (!rel || rel.startsWith('../') || !adapterFor(rel)) return send(200, {})
+
+        const before = snapshotEdges(this.graph, rel)
+        await this.reindex(rel)
+        const text = deltaBrief(before, snapshotEdges(this.graph, rel), rel)
+        if (!text) return send(200, {})
+        return send(200, {
+          hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: text },
+        })
       }
 
       if (url.pathname === '/api/state') return send(200, this.state())

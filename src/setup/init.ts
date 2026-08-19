@@ -131,6 +131,8 @@ function mergeHooks(settingsPath: string, port: number): boolean {
   for (const [event, endpoint] of [
     ['PreToolUse', 'pre'],
     ['PostToolUse', 'post'],
+    ['SessionStart', 'session'],
+    ['UserPromptSubmit', 'prompt'],
   ] as const) {
     const url = `http://127.0.0.1:${port}/${endpoint}`
     settings.hooks[event] ??= []
@@ -150,8 +152,9 @@ function mergeHooks(settingsPath: string, port: number): boolean {
     }
     if (found) continue
 
+    const isToolEvent = event === 'PreToolUse' || event === 'PostToolUse'
     settings.hooks[event].push({
-      matcher: HOOK_MATCHER,
+      ...(isToolEvent ? { matcher: HOOK_MATCHER } : {}),
       hooks: [{ type: 'http', url, timeout: 3 }],
     })
     changed = true
