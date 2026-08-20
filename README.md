@@ -1,5 +1,65 @@
 # CODYSSEY
 
+> Architecture guardrails for AI coding agents.
+> Tells the agent what will break **before** it edits, and actually blocks edits to protected code.
+
+[한국어 문서는 아래에 있습니다 ↓](#codyssey-한국어)
+
+## Why
+
+AI coding agents quietly break things that used to work. Every existing tool only
+*informs* — the agent can ignore it. CODYSSEY intercepts at the `PreToolUse` hook and
+denies the edit with a reason. That is the only point with real enforcement.
+
+## Quick start
+
+```bash
+npx codyssey init
+```
+
+That is the whole setup. It reads your code, writes the config, and opens a web view.
+**Restart Claude Code once** — hook settings are read at session start.
+
+## What it does
+
+- **Blocks edits** to locked files, including shell bypasses (`sed -i`, heredoc, `mv`, `rm`)
+- **Protects contracts** — warns before removing an export that other files import by name
+  (in one real repo, `logger` is imported by 83 files)
+- **Traces impact across languages** — which frontend pages break if you change a Python service
+- **Suggests what to lock** — files that several features or modules share
+- **Tells the agent** what to run after an edit, and what already exists under that name
+- **Zero LLM calls.** Static analysis only. No API key, no code leaving your machine
+- **Zero code changes.** No imports, no decorators. Delete `.codyssey/` and it is gone
+- **Fails open.** If the daemon is down or a rule is unclear, edits pass silently
+
+## Commands
+
+```bash
+codyssey init            set up and open the web view
+codyssey map             draw the structure in your terminal
+codyssey doctor          check that everything is wired correctly
+codyssey impact <file>   what breaks if I change this
+codyssey diff <ref>      how the architecture changed since <ref>
+codyssey mcp             MCP server (4 tools for agents)
+```
+
+## Support
+
+TypeScript / JavaScript / Python.
+Next.js (app + pages router), TanStack Router, FastAPI `APIRouter` prefix composition,
+tsconfig path aliases, TypeScript ESM (`./x.js` → `x.ts`).
+
+## Status
+
+v0.1.0. Verified against 5 real open-source repositories (`npm run bench`).
+119 tests. **The CLI and web UI currently speak Korean** — English UI is planned.
+
+---
+
+<a name="codyssey-한국어"></a>
+
+# CODYSSEY
+
 > AI가 코드를 고치기 전에 **뭐가 깨지는지 알려주고**, 건드리면 안 되는 곳은 **실제로 막습니다.**
 
 바이브 코딩을 하다 보면 AI가 잘 돌아가던 부분을 조용히 망가뜨립니다.
