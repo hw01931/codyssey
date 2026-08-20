@@ -4,7 +4,7 @@
   "private": false,
   "type": "module",
   "bin": {
-    "codyssey": "./dist/cli.js"
+    "codyssey": "dist/cli.js"
   },
   "scripts": {
     "init": "node --experimental-strip-types src/cli.ts init",
