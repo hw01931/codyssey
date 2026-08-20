@@ -30,6 +30,11 @@ export interface Rules {
   features: FeatureRule[]
   layers: LayerRule[]
   autolock: { minFeatures: number; minModules: number; mode: 'off' | 'ask' | 'block' }
+  /**
+   * 밖에서 이름으로 가져다 쓰는 export 를 없앨 때. 기본은 확인 요청.
+   * 이름을 바꾸는 리팩터링 자체는 정상이므로 막기(block)를 기본으로 하지 않는다.
+   */
+  contracts: { mode: 'off' | 'ask' | 'block' }
 }
 
 export const defaultRules = (): Rules => ({
@@ -38,6 +43,7 @@ export const defaultRules = (): Rules => ({
   features: [],
   layers: [],
   autolock: { minFeatures: 3, minModules: 3, mode: 'ask' },
+  contracts: { mode: 'ask' },
 })
 
 /**
@@ -51,6 +57,7 @@ export const inertRules = (): Rules => ({
   features: [],
   layers: [],
   autolock: { minFeatures: 3, minModules: 3, mode: 'off' },
+  contracts: { mode: 'off' },
 })
 
 export type Verdict =

@@ -7,6 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { Daemon } from '../src/daemon/server.ts'
 import { projectPort, samePath } from '../src/setup/port.ts'
+import { init } from '../src/setup/init.ts'
 
 const PORT = 7788
 const BASE = `http://127.0.0.1:${PORT}`
@@ -53,6 +54,16 @@ const pre = (file: string, added = '', tool = 'Edit') =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ tool_name: tool, tool_input: { file_path: file, new_string: added } }),
   }).then(r => r.json() as Promise<any>)
+
+/** Bash 훅. 파일 인자가 없고 명령문만 온다 - 데몬이 직접 대상을 뽑아내야 한다. */
+const bash = (command: string) =>
+  fetch(`${BASE}/pre`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tool_name: 'Bash', tool_input: { command } }),
+  }).then(r => r.json() as Promise<any>)
+
+const daemonState = () => fetch(`${BASE}/api/state`).then(r => r.json() as Promise<any>)
 
 const decision = (r: any) => r?.hookSpecificOutput?.permissionDecision ?? 'allow'
 const reason = (r: any) => r?.hookSpecificOutput?.permissionDecisionReason ?? ''
@@ -150,6 +161,75 @@ layers: []
 autolock: { minFeatures: 99, minModules: 99, mode: block }
 `)
 eq('기준을 올리면 아무것도 안 막는다', decision(await pre('api/services/money.py')), 'allow')
+
+// ---------------------------------------------------------------- Bash 우회
+
+// 이 절이 제품의 핵심 주장을 지킨다. Edit/Write 만 막던 시절에는
+// `sed -i` 한 줄로 잠긴 파일이 조용히 덮어써졌고 활동 기록에도 안 남았다.
+console.log('\n[Bash 로 우회하기]')
+setRules(`version: 1
+protect:
+  - path: api/services/payment.py
+    reason: 결제 코어. 사람 승인 필요
+features: []
+layers: []
+autolock: { minFeatures: 99, minModules: 99, mode: off }
+`)
+
+eq('sed -i 로 못 고친다', decision(await bash(`sed -i 's/a/b/' api/services/payment.py`)), 'deny')
+eq('heredoc 으로 못 덮어쓴다', decision(await bash(`cat > api/services/payment.py <<'EOF'\nx = 1\nEOF`)), 'deny')
+eq('>> 로 못 덧붙인다', decision(await bash('echo x >> api/services/payment.py')), 'deny')
+eq('tee 로 못 쓴다', decision(await bash('echo x | tee api/services/payment.py')), 'deny')
+eq('mv 로 못 치운다', decision(await bash('mv api/services/payment.py /tmp/bak.py')), 'deny')
+eq('rm 으로 못 지운다', decision(await bash('rm -f api/services/payment.py')), 'deny')
+eq('cp 로 못 덮어쓴다', decision(await bash('cp /tmp/x.py api/services/payment.py')), 'deny')
+eq('절대경로로 와도 막는다', decision(await bash(`sed -i s/a/b/ "${tmp.split(path.sep).join('/')}/api/services/payment.py"`)), 'deny')
+eq('bash -c 안에 숨겨도 막는다', decision(await bash(`bash -c "sed -i s/a/b/ api/services/payment.py"`)), 'deny')
+eq('글롭으로 뭉뚱그려도 막는다', decision(await bash('rm -f api/services/*.py')), 'deny')
+
+const opaque = await bash(`python -c "open('api/services/payment.py','w').write('')"`)
+eq('해석 못 하는 명령도 잠긴 파일이 보이면 막는다', decision(opaque), 'deny')
+ok('왜 막았는지 말해준다', reason(opaque).includes('api/services/payment.py'), reason(opaque))
+eq('git checkout 도 막는다', decision(await bash('git checkout -- api/services/payment.py')), 'deny')
+
+ok('활동 기록에 남는다', (await daemonState()).activity.some((a: any) => a.tool === 'Bash' && a.action === 'block'))
+
+// 여기부터가 반대쪽이다. 셸을 통째로 막으면 하루 만에 제거당한다. (D9)
+console.log('\n[Bash 는 필요 이상으로 막지 않는다]')
+eq('읽기는 통과', decision(await bash('cat api/services/payment.py')), 'allow')
+eq('grep 은 통과', decision(await bash('grep -rn charge api/')), 'allow')
+eq('sed -n (출력 전용) 은 통과', decision(await bash(`sed -n '1,20p' api/services/payment.py`)), 'allow')
+eq('git status 는 통과', decision(await bash('git status --short')), 'allow')
+eq('테스트 실행은 통과', decision(await bash('npm test -- --watch=false')), 'allow')
+eq('빌드 산출물 리다이렉션은 통과', decision(await bash('node build.mjs > dist/out.txt')), 'allow')
+eq('잠기지 않은 파일은 통과', decision(await bash(`sed -i 's/a/b/' api/services/order.py`)), 'allow')
+eq('빈 명령은 통과', decision(await bash('')), 'allow')
+
+// 잠금은 글롭이다. 아직 그래프에 없는 새 파일도 패턴에 걸리면 막아야 한다.
+console.log('\n[아직 그래프에 없는 파일]')
+setRules('version: 1\nprotect:\n  - path: api/services/**\n    reason: 서비스 계층 보호\nfeatures: []\nlayers: []\nautolock: { minFeatures: 99, minModules: 99, mode: off }\n')
+eq('패턴 안의 새 파일도 막는다 (Bash)', decision(await bash('echo x > api/services/brand_new.py')), 'deny')
+eq('패턴 안의 새 파일도 막는다 (Write)', decision(await pre('api/services/brand_new.py', 'x = 1', 'Write')), 'deny')
+eq('패턴 밖의 새 파일은 통과', decision(await bash('echo x > api/routes/brand_new.py')), 'allow')
+
+// 자동 잠금과 레이어 규칙도 Bash 에 그대로 걸려야 한다
+console.log('\n[Bash 에도 나머지 규칙이 걸린다]')
+setRules('version: 1\nprotect: []\nfeatures: []\nlayers: []\nautolock: { minFeatures: 3, mode: ask }\n')
+eq('공유 파일은 Bash 에서도 확인 요청', decision(await bash(`sed -i 's/a/b/' web/lib/money.ts`)), 'escalate')
+
+setRules(`version: 1
+protect: []
+features: []
+layers:
+  - deny: web/components/** -> web/lib/api.ts
+    reason: 데이터 가져오기는 페이지에서만
+autolock: { minFeatures: 99, minModules: 99, mode: off }
+`)
+eq(
+  'heredoc 으로 몰래 넣는 import 도 잡는다',
+  decision(await bash(`cat > web/components/Sneaky.tsx <<'EOF'\nimport { fetchOrders } from '@/lib/api'\nEOF`)),
+  'deny',
+)
 
 // ---------------------------------------------------------------- 안전장치 (P4/P5)
 
@@ -322,6 +402,63 @@ ok(
 fs.rmSync(newFile)
 await daemon.reindex('web/components/Badge.tsx')
 ok('지우면 빠진다', !daemon.graph.nodes.has('web/components/Badge.tsx'))
+
+// ---------------------------------------------------------------- init
+
+// 설치가 잘못되면 데몬이 아무리 정확해도 호출조차 안 된다. D17 이 그 사고였다.
+console.log('\n[설치가 실제로 막을 수 있는 상태인가]')
+{
+  const itmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codyssey-init-'))
+  fs.cpSync('fixtures/shop', itmp, { recursive: true })
+  fs.rmSync(path.join(itmp, '.claude'), { recursive: true, force: true })
+
+  await init(itmp, PORT + 2)
+  const read = () => JSON.parse(fs.readFileSync(path.join(itmp, '.claude', 'settings.json'), 'utf8'))
+  const matchers = (s: any) =>
+    ['PreToolUse', 'PostToolUse'].flatMap((ev: string) => (s.hooks[ev] ?? []).map((g: any) => g.matcher))
+
+  ok('Bash 가 matcher 에 들어간다', matchers(read()).every((m: string) => /(^|\|)Bash(\||$)/.test(m)), matchers(read()).join(', '))
+
+  // 예전 설치본을 흉내낸다. 다시 init 을 돌리면 스스로 고쳐져야 한다.
+  const old = read()
+  for (const ev of ['PreToolUse', 'PostToolUse']) for (const g of old.hooks[ev]) g.matcher = 'Edit|Write|NotebookEdit'
+  fs.writeFileSync(path.join(itmp, '.claude', 'settings.json'), JSON.stringify(old, null, 2))
+  await init(itmp, PORT + 2)
+  ok('예전 설치본도 다시 init 하면 고쳐진다', matchers(read()).every((m: string) => /(^|\|)Bash(\||$)/.test(m)))
+
+  // 개발 모드에서는 명령에 저장소 경로가 들어간다. 그 경로가 대문자면 예전에는
+  // '아직 없다' 고 판정해서 훅이 매번 하나씩 늘었다.
+  const before = JSON.stringify(read())
+  await init(itmp, PORT + 2)
+  await init(itmp, PORT + 2)
+  eq('여러 번 돌려도 훅이 안 늘어난다', JSON.stringify(read()), before)
+
+  fs.rmSync(itmp, { recursive: true, force: true })
+}
+
+// ---------------------------------------------------------------- 워처
+
+// 디바운스 타이머 하나에 파일 하나만 실으면, 여러 파일이 한꺼번에 바뀔 때
+// 마지막 하나만 남고 나머지가 조용히 사라진다. 그래프가 낡으면 판정도 낡는다.
+console.log('\n[여러 파일이 한꺼번에 바뀔 때]')
+{
+  const wtmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codyssey-watch-'))
+  fs.writeFileSync(path.join(wtmp, 'a.ts'), 'export const a = 1\n')
+  const wd = new Daemon(wtmp, PORT + 1)
+  await wd.start({ watch: true })
+  await new Promise(r => setTimeout(r, 300))
+
+  for (const n of ['b', 'c', 'd', 'e']) fs.writeFileSync(path.join(wtmp, `${n}.ts`), `export const ${n} = 1\n`)
+  await new Promise(r => setTimeout(r, 1500))
+  eq('4개를 동시에 만들면 4개 다 들어온다', wd.graph.nodes.size, 5)
+
+  for (const n of ['b', 'c', 'd']) fs.rmSync(path.join(wtmp, `${n}.ts`))
+  await new Promise(r => setTimeout(r, 1500))
+  eq('한꺼번에 지워도 다 빠진다', wd.graph.nodes.size, 2)
+
+  await wd.stop()
+  fs.rmSync(wtmp, { recursive: true, force: true })
+}
 
 // ---------------------------------------------------------------- 속도
 

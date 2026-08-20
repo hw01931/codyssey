@@ -18,7 +18,11 @@ export interface InitResult {
   skipped: string[]
 }
 
-const HOOK_MATCHER = 'Edit|Write|NotebookEdit'
+/**
+ * Bash 가 빠지면 안 된다. 에이전트는 `sed -i`, heredoc, `python -c` 로 파일을 쓴다.
+ * Edit/Write 만 걸어두면 도구를 바꾸는 것만으로 잠금이 통째로 우회된다.
+ */
+export const HOOK_MATCHER = 'Edit|Write|NotebookEdit|Bash'
 
 export async function init(repoRoot: string, requestedPort?: number): Promise<InitResult> {
   const root = path.resolve(repoRoot)
@@ -113,7 +117,15 @@ function mergeHooks(settingsPath: string, port: number): boolean {
   let hasStarter = false
   for (const group of settings.hooks.SessionStart) {
     for (const h of group.hooks ?? []) {
-      if (typeof h.command !== 'string' || !h.command.includes('codyssey')) continue
+      // 대소문자를 가리면 안 된다. 개발 모드에서는 명령에 저장소 경로가 그대로 들어가는데
+      // 그 경로가 대문자면(D:/workspace/CODYSSEY) 매번 '없다' 고 판정해서 훅이 중복 추가됐다.
+      if (typeof h.command !== 'string' || !isStarter(h.command)) continue
+      if (hasStarter) {
+        // 이미 예전 버그로 중복된 게 있으면 표시해뒀다가 아래에서 걷어낸다
+        h.__dup = true
+        changed = true
+        continue
+      }
       hasStarter = true
       const next = starterCommand(port)
       if (h.command !== next) {
@@ -121,6 +133,11 @@ function mergeHooks(settingsPath: string, port: number): boolean {
         changed = true
       }
     }
+  }
+  if (hasStarter) {
+    settings.hooks.SessionStart = settings.hooks.SessionStart
+      .map((g: any) => ({ ...g, hooks: (g.hooks ?? []).filter((h: any) => !h.__dup) }))
+      .filter((g: any) => g.hooks.length)
   }
   if (!hasStarter) {
     settings.hooks.SessionStart.push({
@@ -146,6 +163,8 @@ function mergeHooks(settingsPath: string, port: number): boolean {
     const url = `http://127.0.0.1:${port}/${endpoint}`
     settings.hooks[event] ??= []
 
+    const isToolEvent = event === 'PreToolUse' || event === 'PostToolUse'
+
     // 이미 우리 훅이 있으면 URL 을 현재 포트로 고쳐준다.
     // 예전에는 그냥 건너뛰어서, 포트가 바뀌어도 옛 포트를 계속 가리켰다.
     let found = false
@@ -157,11 +176,16 @@ function mergeHooks(settingsPath: string, port: number): boolean {
           h.url = url
           changed = true
         }
+        // matcher 도 갱신한다. 예전 설치본은 Bash 가 빠진 matcher 를 그대로 들고 있어서,
+        // 다시 init 을 돌려도 셸 우회가 계속 열려 있었다.
+        if (isToolEvent && group.matcher !== HOOK_MATCHER) {
+          group.matcher = HOOK_MATCHER
+          changed = true
+        }
       }
     }
     if (found) continue
 
-    const isToolEvent = event === 'PreToolUse' || event === 'PostToolUse'
     settings.hooks[event].push({
       ...(isToolEvent ? { matcher: HOOK_MATCHER } : {}),
       hooks: [{ type: 'http', url, timeout: 3 }],
@@ -175,6 +199,9 @@ function mergeHooks(settingsPath: string, port: number): boolean {
   }
   return changed
 }
+
+/** 우리가 심은 데몬 기동 훅인가. 경로 대소문자에 걸리면 안 된다. */
+const isStarter = (cmd: string) => /codyssey/i.test(cmd) && /\bensure\b/.test(cmd)
 
 /**
  * 훅에서 실행할 명령. 개발 중에는 이 저장소의 cli.ts 를, 배포 후에는 npx 를 쓴다.

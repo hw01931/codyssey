@@ -4,6 +4,7 @@
  */
 import { scan } from '../src/index/scan.ts'
 import { computeFeatures, autolockCandidates, featuresOf } from '../src/core/features.ts'
+import { shellWrites } from '../src/core/shell.ts'
 
 let pass = 0
 let fail = 0
@@ -116,6 +117,43 @@ eq(
   sorted(graph.dependents('api/routes/payments.py')).filter(f => f.startsWith('web/app')),
   ['web/app/checkout/page.tsx'],
 )
+
+// ---------------------------------------------------------------- 셸 파싱
+
+// 여기가 뚫리면 잠금 전체가 무의미해진다. `sed -i` 한 줄이면 끝이었다.
+console.log('\n[셸 명령에서 쓰기 대상 뽑기]')
+const w = (cmd: string) => shellWrites(cmd)
+
+eq('리다이렉션', w('echo x > a/b.ts').targets, ['a/b.ts'])
+eq('덧붙이기', w('echo x >> a/b.ts').targets, ['a/b.ts'])
+eq('heredoc 본문은 명령이 아니다', w("cat > a/b.py <<'EOF'\nx > y\nrm z.py\nEOF").targets, ['a/b.py'])
+eq('sed 제자리 편집', w("sed -i 's/x/y/' a/b.ts").targets, ['a/b.ts'])
+eq('sed -e 는 첫 인자부터 파일', w("sed -i -e 's/x/y/' a/b.ts").targets, ['a/b.ts'])
+eq('tee', w('echo x | tee a/b.ts').targets, ['a/b.ts'])
+eq('입력 리다이렉션은 대상이 아니다', w('tee a/b.ts < in.txt').targets, ['a/b.ts'])
+eq('cp 목적지', w('cp src.ts a/b.ts').targets, ['a/b.ts'])
+eq('mv 는 원본도 사라진다', w('mv a/b.ts c/d.ts').targets, ['a/b.ts', 'c/d.ts'])
+eq('rm', w('rm -rf a/b.ts').targets, ['a/b.ts'])
+eq('dd of=', w('dd if=/dev/zero of=a/b.bin').targets, ['a/b.bin'])
+eq('bash -c 안쪽까지 본다', w(`bash -c "sed -i s/x/y/ a/b.ts"`).targets, ['a/b.ts'])
+eq('윈도우 절대경로', w('sed -i s/x/y/ C:/work/a/b.ts').targets, ['C:/work/a/b.ts'])
+eq('&& 로 이어붙여도 전부 본다', w('npm test && rm a/b.ts').targets, ['a/b.ts'])
+
+// 읽기 전용 명령에서 대상이 나오면 안 된다. 오탐이 쌓이면 도구가 제거당한다.
+eq('cat 은 쓰기가 아니다', w('cat a/b.ts').targets, [])
+eq('grep 은 쓰기가 아니다', w('grep -rn x a/').targets, [])
+eq('sed -n 은 출력만 한다', w("sed -n '1,5p' a/b.ts").targets, [])
+eq('2>&1 은 파일이 아니다', w('cmd 2>&1 | tail').targets, [])
+eq('/dev/null 은 무시', w('cmd > /dev/null').targets, [])
+eq('읽기 전용은 opaque 도 아니다', w('grep -rn x a/ | wc -l').opaque, false)
+
+// 해석 못 하는 건 '못 한다' 고 말해야 한다. 짚었다고 거짓말하면 P4 위반이다.
+eq('python -c 는 opaque', w(`python -c "open('x','w')"`).opaque, true)
+eq('git checkout 은 opaque', w('git checkout -- a/b.ts').opaque, true)
+eq('git status 는 opaque 아님', w('git status --short').opaque, false)
+eq('변수는 못 짚는다', w('echo x > $OUT').opaque, true)
+eq('글롭도 못 짚는다', w('rm a/*.ts').opaque, true)
+eq('find -exec 는 opaque', w('find . -name "*.ts" -exec sed -i s/a/b/ {} +').opaque, true)
 
 console.log('\n[결정성]')
 const a = JSON.stringify((await scan('fixtures/shop')).graph.toJSON())

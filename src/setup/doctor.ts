@@ -51,10 +51,29 @@ export async function doctor(repoRoot: string): Promise<Check[]> {
     try {
       const s = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
       const urls: string[] = []
+      const toolMatchers: string[] = []
       for (const ev of ['PreToolUse', 'PostToolUse']) {
         for (const g of s?.hooks?.[ev] ?? []) {
-          for (const hk of g.hooks ?? []) if (typeof hk.url === 'string') urls.push(hk.url)
+          let mine = false
+          for (const hk of g.hooks ?? []) {
+            if (typeof hk.url !== 'string') continue
+            urls.push(hk.url)
+            mine = true
+          }
+          if (mine) toolMatchers.push(String(g.matcher ?? ''))
         }
+      }
+
+      // Bash 가 matcher 에 없으면 `sed -i` 한 줄로 잠금이 통째로 우회된다.
+      // 예전 설치본이 이 상태라서, 막고 있다고 믿는 동안 실제로는 안 막힌다.
+      const noBash = toolMatchers.filter(m => !/(^|\|)Bash(\||$)/.test(m))
+      if (noBash.length) {
+        checks.push({
+          ok: false,
+          label: 'Bash 편집이 훅을 안 거칩니다',
+          detail: `matcher: ${noBash.join(', ') || '(없음)'}`,
+          fix: 'codyssey init 을 다시 실행하면 matcher 에 Bash 가 들어갑니다',
+        })
       }
       if (!urls.length) {
         checks.push({ ok: false, label: '훅이 설정돼 있지 않습니다', fix: 'codyssey init' })
