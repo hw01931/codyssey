@@ -13,6 +13,7 @@ import type { Graph } from '../core/graph.ts'
 import type { ResolveCtx } from '../core/ir.ts'
 import { deltaBrief, promptBrief, sessionBrief, snapshotEdges, type CtxInput } from './context.ts'
 import { brokenContracts, contractsOf, duplicateNames, nameIndex, testsFor } from '../core/contract.ts'
+import { describeFeature, describeFile, describeModule, emptyLabels, loadLabels, saveLabels, unlabeled, type Labels } from '../core/labels.ts'
 
 const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui')
 
@@ -36,6 +37,7 @@ export class Daemon {
   features!: Features
   modules!: Modules
   private names = new Map<string, string[]>()
+  labels: Labels = emptyLabels()
   rules: Rules = defaultRules()
   activity: Activity[] = []
   /** 우리 루트 밖에서 들어온 요청 수. 0 이 아니면 포트 설정이 잘못된 것이다. */
@@ -61,6 +63,7 @@ export class Daemon {
   async start({ watch = true } = {}) {
     await this.fullScan()
     this.loadRules()
+    this.loadLabels()
     if (watch) this.startWatching()
     await this.listen()
     return this
@@ -139,6 +142,18 @@ export class Daemon {
   }
 
   // -------------------------------------------------------------- 룰
+
+  /** 사람이 읽는 이름. 사전 폴백이 있어서 파일이 없어도 동작한다. */
+  loadLabels() {
+    this.labels = loadLabels(this.repoRoot)
+  }
+
+  /** 이 기능/모듈/파일을 사람 말로 */
+  say = {
+    feature: (id: string) => describeFeature(id, this.labels),
+    module: (m: string) => describeModule(m, this.labels),
+    file: (f: string) => describeFile(f, this.labels),
+  }
 
   loadRules() {
     try {
@@ -309,7 +324,7 @@ export class Daemon {
         const adapter = this.files.get(from)?.adapter ?? adapterFor(from)
         return adapter?.resolve(spec, from, this.ctx)?.path ?? null
       },
-    }, this.modules)
+    }, this.modules, this.say)
   }
 
   private foreignAllow(tool: string, raw: string): Verdict {
@@ -375,6 +390,7 @@ export class Daemon {
         const fr = (this.rules.features ?? []).find(f => f.id === r.id)
         return {
           id: r.id,
+          label: this.say.feature(r.id),
           kind: r.kind,
           file: r.file,
           size: this.features.members.get(r.id)?.size ?? 0,
@@ -387,24 +403,27 @@ export class Daemon {
         id: n.id,
         lang: n.lang,
         features: featuresOf(this.features, n.id),
+        featureLabels: featuresOf(this.features, n.id).map(f => this.say.feature(f)),
+        label: this.say.file(n.id),
         module: this.modules.of.get(n.id) ?? '',
+        moduleLabel: this.say.module(this.modules.of.get(n.id) ?? ''),
         symbols: n.symbols.length,
         locked: locked.has(n.id),
         isEntry: this.features.entries.some(e => e.file === n.id),
       })),
       edges: this.graph.edges.map(e => ({ from: e.from, to: e.to, kind: e.kind, confidence: e.confidence, via: e.via })),
       modules: [...this.modules.members.entries()]
-        .map(([name, fs]) => ({ name, files: fs.length }))
+        .map(([name, fs]) => ({ name, label: this.say.module(name), files: fs.length }))
         .sort((a, b) => b.files - a.files || (a.name < b.name ? -1 : 1)),
       suggestions: [
         ...autolockCandidates(this.features, this.rules.autolock.minFeatures).map(c => ({
           file: c.file,
-          why: c.features,
+          why: c.features.map(f => this.say.feature(f)),
           kind: 'feature' as const,
         })),
         ...crossModuleShared(this.graph, this.modules, this.rules.autolock.minModules ?? 3).map(c => ({
           file: c.file,
-          why: c.modules,
+          why: c.modules.map(m => this.say.module(m)),
           kind: 'module' as const,
         })),
       ]
@@ -529,9 +548,34 @@ export class Daemon {
         return send(200, { ok: true, rules: this.rules })
       }
 
+      if (url.pathname === '/api/labels' && req.method === 'POST') {
+        const body = await readJson(req)
+        const next: Labels = {
+          features: { ...this.labels.features, ...((body.features ?? {}) as Record<string, string>) },
+          modules: { ...this.labels.modules, ...((body.modules ?? {}) as Record<string, string>) },
+          files: { ...this.labels.files, ...((body.files ?? {}) as Record<string, string>) },
+        }
+        saveLabels(this.repoRoot, next)
+        this.labels = next
+        return send(200, { ok: true, counts: {
+          features: Object.keys(next.features).length,
+          modules: Object.keys(next.modules).length,
+          files: Object.keys(next.files).length,
+        } })
+      }
+
+      if (url.pathname === '/api/unlabeled') {
+        return send(200, unlabeled(
+          this.features.roots.map(r => r.id),
+          [...this.modules.members.keys()],
+          this.labels,
+        ))
+      }
+
       if (url.pathname === '/api/rescan' && req.method === 'POST') {
         await this.fullScan()
         this.loadRules()
+        this.loadLabels()
         return send(200, { ok: true, files: this.graph.nodes.size })
       }
 

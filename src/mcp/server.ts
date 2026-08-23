@@ -44,10 +44,12 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
         `파일 ${s.counts.files} · 연결 ${s.counts.edges} · 기능 ${s.counts.features} · 잠김 ${s.counts.locks}`,
         '',
         '기능 (사용자가 쓰는 화면/API)',
-        ...s.features.map((f: any) => `  ${f.id}  (${f.size}개 파일, 이 기능만 쓰는 파일 ${f.exclusive}개)${f.locked ? ' [잠김]' : ''}`),
+        ...s.features.map(
+          (f: any) => `  ${f.label ?? f.id}  ${f.id}  (${f.size}개 파일, 전용 ${f.exclusive}개)${f.locked ? ' [잠김]' : ''}`,
+        ),
         '',
         '큰 모듈',
-        ...s.modules.slice(0, 12).map((m: any) => `  ${m.name}  ${m.files}개`),
+        ...s.modules.slice(0, 12).map((m: any) => `  ${m.label ?? m.name}  (${m.name})  ${m.files}개`),
       ]
       const locked = s.nodes.filter((n: any) => n.locked).map((n: any) => n.id)
       if (locked.length) L.push('', `잠긴 파일 (수정하면 차단됨)`, ...locked.map((f: string) => `  ${f}`))
@@ -72,9 +74,11 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
       const users = s.edges.filter((e: any) => e.to === node.id).map((e: any) => e.from)
       const uses = s.edges.filter((e: any) => e.from === node.id).map((e: any) => e.to)
       const L = [
-        `${node.id}${node.locked ? '  [잠김 - 수정하면 차단됨]' : ''}`,
-        `모듈: ${node.module || '-'}`,
-        node.features.length ? `영향 기능 ${node.features.length}개: ${node.features.join(', ')}` : '어느 기능에도 안 속함',
+        `${node.label ?? node.id}  (${node.id})${node.locked ? '  [잠김 - 수정하면 차단됨]' : ''}`,
+        `속한 곳: ${node.moduleLabel ?? node.module ?? '-'}`,
+        node.features.length
+          ? `영향 기능 ${node.features.length}개: ${(node.featureLabels ?? node.features).join(', ')}`
+          : '어느 기능에도 안 속함',
         `이 파일을 쓰는 곳 ${users.length}개${users.length ? ': ' + users.slice(0, 20).join(', ') : ''}`,
         `이 파일이 쓰는 것 ${uses.length}개${uses.length ? ': ' + uses.slice(0, 20).join(', ') : ''}`,
       ]
@@ -131,6 +135,60 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
           .filter(Boolean)
           .join('\n'),
       )
+    },
+  )
+
+  server.registerTool(
+    'get_unlabeled',
+    {
+      title: '아직 사람 이름이 없는 것들',
+      description:
+        '이 저장소의 기능과 폴더 묶음 중 아직 사람이 읽는 이름이 없는 것을 준다. ' +
+        'set_labels 로 이름을 붙여주면 코드를 모르는 사람도 알아볼 수 있게 된다. ' +
+        '처음 한 번만 하면 되고 결과는 파일에 저장된다.',
+      inputSchema: {},
+    },
+    async () => {
+      const u = await api('/api/unlabeled')
+      if (!u.features.length && !u.modules.length) return text('전부 이름이 붙어 있습니다.')
+      return text(
+        [
+          '아래 항목에 짧은 한국어 이름을 붙여 set_labels 로 보내주세요.',
+          '코드를 전혀 모르는 사람이 읽는다고 생각하고, 5글자 안팎으로 지어주세요.',
+          '예: "PAGE /checkout" -> "결제 화면",  "api/services" -> "서버 처리 로직"',
+          '',
+          '기능:',
+          ...u.features.map((f: string) => `  ${f}`),
+          '',
+          '폴더 묶음:',
+          ...u.modules.map((m: string) => `  ${m}`),
+        ].join('\n'),
+      )
+    },
+  )
+
+  server.registerTool(
+    'set_labels',
+    {
+      title: '사람이 읽는 이름 저장',
+      description:
+        '기능·폴더·파일에 사람이 읽는 이름을 붙여 .codyssey/labels.yaml 에 저장한다. ' +
+        '한 번 저장하면 계속 쓰이고, 사람이 파일을 직접 고칠 수도 있다.',
+      inputSchema: {
+        features: z.record(z.string()).optional().describe('진입점 id -> 이름. 예: {"PAGE /checkout": "결제 화면"}'),
+        modules: z.record(z.string()).optional().describe('폴더 묶음 -> 이름. 예: {"api/services": "서버 처리 로직"}'),
+        files: z.record(z.string()).optional().describe('파일 경로 -> 이름'),
+      },
+    },
+    async ({ features, modules, files }) => {
+      const res = await fetch(`http://127.0.0.1:${port}/api/labels`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ features, modules, files }),
+        signal: AbortSignal.timeout(5000),
+      })
+      const j: any = await res.json()
+      return text(`저장했습니다. 기능 ${j.counts.features}개, 폴더 ${j.counts.modules}개, 파일 ${j.counts.files}개.`)
     },
   )
 

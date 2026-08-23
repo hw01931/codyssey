@@ -64,6 +64,15 @@ export type Verdict =
   | { action: 'allow' }
   | { action: 'ask' | 'block'; reason: string; hint?: string; rule: string }
 
+/** 기능·모듈·파일을 사람이 읽는 이름으로. 없으면 원문 그대로 쓴다. */
+export interface Say {
+  feature: (id: string) => string
+  module: (m: string) => string
+  file: (f: string) => string
+}
+
+const RAW: Say = { feature: x => x, module: x => x, file: x => x }
+
 export interface EditCheck {
   /** 레포 루트 기준 상대경로 */
   file: string
@@ -89,6 +98,7 @@ export function checkEdit(
   features: Features,
   edit: EditCheck,
   modules?: Modules,
+  say: Say = RAW,
 ): Verdict {
   const file = norm(edit.file)
 
@@ -98,8 +108,8 @@ export function checkEdit(
     return {
       action: 'block',
       rule: `protect: ${p.path}`,
-      reason: p.reason ?? '보호된 파일입니다.',
-      hint: extensionHint(graph, features, file),
+      reason: `${say.file(file)} 은(는) 보호된 파일입니다. ${p.reason ?? ''}`.trim(),
+      hint: nextStep(graph, features, file, say),
     }
   }
 
@@ -111,7 +121,7 @@ export function checkEdit(
     return {
       action: 'block',
       rule: `feature: ${fr.id} (${scope})`,
-      reason: fr.reason ?? `'${fr.id}' 기능이 잠겨 있습니다.`,
+      reason: `${say.feature(fr.id)} 은(는) 잠겨 있습니다. ${fr.reason ?? ''}`.trim(),
       hint:
         scope === 'exclusive'
           ? `이 파일은 '${fr.id}' 전용입니다. 다른 기능 파일은 자유롭게 고칠 수 있습니다.`
@@ -147,8 +157,10 @@ export function checkEdit(
       return {
         action: rules.autolock.mode,
         rule: `autolock: >=${rules.autolock.minFeatures} features`,
-        reason: `기능 ${feats.length}개가 공유하는 파일입니다: ${feats.join(', ')}`,
-        hint: extensionHint(graph, features, file),
+        reason:
+          `이 파일을 고치면 ${feats.map(f => say.feature(f)).join(', ')} ` +
+          `${feats.length}곳이 같이 바뀝니다. 계속할까요?`,
+        hint: nextStep(graph, features, file, say),
       }
     }
 
@@ -161,8 +173,10 @@ export function checkEdit(
         return {
           action: rules.autolock.mode,
           rule: `autolock: >=${min} modules`,
-          reason: `모듈 ${ms.length}곳이 함께 쓰는 파일입니다: ${ms.slice(0, 4).join(', ')}${ms.length > 4 ? ' 외' : ''}`,
-          hint: extensionHint(graph, features, file),
+          reason:
+            `이 파일은 ${ms.slice(0, 3).map(m => say.module(m)).join(', ')}` +
+            `${ms.length > 3 ? ` 외 ${ms.length - 3}곳` : ''}에서 함께 씁니다. 계속할까요?`,
+          hint: nextStep(graph, features, file, say),
         }
       }
     }
@@ -201,6 +215,17 @@ export function suggestRules(features: Features, minFeatures = 3): Rules {
 
 /** 배럴/빈 파일은 대안이 될 수 없다. */
 const IS_BARREL = /(^|\/)(__init__\.py|index\.(ts|tsx|js|jsx))$/
+
+/**
+ * 막고 끝내면 안 된다. 코드를 모르는 사람은 거기서 멈춘다.
+ * 무엇을 할 수 있는지 항상 같이 말한다.
+ */
+function nextStep(graph: Graph, features: Features, file: string, say: Say): string {
+  const lines = [`그래도 바꾸려면 "codyssey 에서 ${say.file(file)} 잠금 풀어줘" 라고 말하세요.`]
+  const alt = extensionHint(graph, features, file)
+  if (alt) lines.push(alt)
+  return lines.join('\n')
+}
 
 /**
  * 대안 경로 제안: 같은 폴더에서 '실제 내용이 있고 기능 하나만 쓰는' 파일로 유도한다.

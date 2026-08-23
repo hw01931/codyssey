@@ -67,6 +67,7 @@ const daemonState = () => fetch(`${BASE}/api/state`).then(r => r.json() as Promi
 
 const decision = (r: any) => r?.hookSpecificOutput?.permissionDecision ?? 'allow'
 const reason = (r: any) => r?.hookSpecificOutput?.permissionDecisionReason ?? ''
+const ctxOf = (r: any) => r?.hookSpecificOutput?.additionalContext ?? ''
 
 const setRules = (yaml: string) => {
   fs.mkdirSync(path.join(tmp, '.codyssey'), { recursive: true })
@@ -133,7 +134,9 @@ console.log('\n[자동 잠금]')
 setRules('version: 1\nprotect: []\nlayers: []\nautolock: { minFeatures: 3, mode: ask }\n')
 const shared = await pre('web/lib/money.ts', 'export const x = 1')
 eq('공유 파일은 확인 요청', decision(shared), 'escalate')
-ok('몇 개 기능이 쓰는지 알려준다', reason(shared).includes('기능 3개'), reason(shared))
+// 코드를 모르는 사람이 읽는다. 'PAGE /admin' 이 아니라 '관리자 화면' 이어야 한다.
+ok('어느 화면이 같이 바뀌는지 사람 말로 알려준다', reason(shared).includes('관리자 화면'), reason(shared))
+ok('무엇을 할 수 있는지도 말해준다', ctxOf(shared).includes('잠금 풀어줘'), ctxOf(shared).split(String.fromCharCode(10))[0])
 eq('단일 기능 파일은 그대로 통과', decision(await pre('web/components/PriceRow.tsx')), 'allow')
 
 setRules('version: 1\nprotect: []\nlayers: []\nautolock: { minFeatures: 3, mode: block }\n')
@@ -151,7 +154,7 @@ autolock: { minFeatures: 99, minModules: 2, mode: block }
 `)
 const byModule = await pre('api/services/money.py')
 eq('여러 모듈이 쓰는 파일은 차단', decision(byModule), 'deny')
-ok('모듈 개수를 알려준다', /모듈 \d+곳/.test(reason(byModule)), reason(byModule))
+ok('몇 곳이 함께 쓰는지 알려준다', /\d+곳에서 함께 씁니다/.test(reason(byModule)), reason(byModule))
 eq('한 모듈만 쓰는 파일은 통과', decision(await pre('web/components/PriceRow.tsx')), 'allow')
 
 setRules(`version: 1
