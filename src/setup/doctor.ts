@@ -117,7 +117,27 @@ export async function doctor(repoRoot: string): Promise<Check[]> {
     }
   }
 
-  // 4) 남의 요청이 들어오는지
+  // 4) 못 읽은 파일
+  if (h && samePath(h.repoRoot, root)) {
+    try {
+      const st = (await (await fetch(`http://127.0.0.1:${port}/api/state`)).json()) as {
+        parseFailures?: { file: string; error: string }[]
+      }
+      const pf = st.parseFailures ?? []
+      if (pf.length) {
+        checks.push({
+          ok: false,
+          label: `읽지 못한 파일이 ${pf.length}개 있습니다`,
+          detail: pf.slice(0, 3).map(x => x.file).join(', '),
+          fix: '그 파일들은 보호 대상에서 빠집니다. 문법 오류가 없는지 확인해 주세요',
+        })
+      }
+    } catch {
+      /* 못 읽어도 진단은 계속 */
+    }
+  }
+
+  // 5) 남의 요청이 들어오는지
   if (h && samePath(h.repoRoot, root)) {
     try {
       const st = (await (await fetch(`http://127.0.0.1:${port}/api/state`)).json()) as { foreign?: number }

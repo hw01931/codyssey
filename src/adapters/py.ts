@@ -28,6 +28,12 @@ const MOUNT_Q = `
   (#eq? @fn "include_router"))
 `
 
+/** 이름을 부르는 자리 */
+const USE_Q = `
+(call function: (identifier) @use)
+(call function: (attribute object: (identifier) @use))
+`
+
 /** @router.get("/orders") def handler(): ... */
 const ROUTE_Q = `
 (decorator
@@ -104,6 +110,19 @@ export const pyAdapter: LangAdapter = {
     }
 
     out.symbols = await extractSymbols(G, root)
+
+    const own = new Set(out.symbols.map(s => s.name))
+    const imported = new Set(Object.keys(out.bindings))
+    for (const m of captures(await getQuery(G, 'uses', USE_Q), root)) {
+      const node = m.use
+      if (!node) continue
+      const name = node.text
+      if (PY_RESERVED.has(name)) continue
+      const from = enclosingSymbol(node)
+      if (from === name) continue
+      if (!own.has(name) && !imported.has(name)) continue
+      out.calls.push({ from, to: name, line: node.startPosition.row + 1 })
+    }
     return out
   },
 
@@ -134,6 +153,23 @@ export const pyAdapter: LangAdapter = {
     }
     return null
   },
+}
+
+const PY_RESERVED = new Set([
+  'print', 'len', 'range', 'int', 'str', 'float', 'bool', 'list', 'dict', 'set', 'tuple',
+  'sum', 'min', 'max', 'sorted', 'enumerate', 'zip', 'open', 'isinstance', 'super', 'type',
+  'getattr', 'setattr', 'hasattr', 'round', 'abs', 'any', 'all', 'map', 'filter',
+])
+
+/** 이 노드를 감싼 최상위 def/class. 파이썬은 들여쓰기가 곧 구조라 부모를 타고 올라간다. */
+function enclosingSymbol(node: Node): string | undefined {
+  let outermost: string | undefined
+  for (let n: Node | null = node.parent; n && n.type !== 'module'; n = n.parent) {
+    if (n.type !== 'function_definition' && n.type !== 'class_definition') continue
+    const name = n.childForFieldName('name')
+    if (name) outermost = name.text
+  }
+  return outermost
 }
 
 function importedNames(stmt: Node): string[] {

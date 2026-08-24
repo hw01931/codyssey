@@ -1,5 +1,11 @@
 [
   {
+    "name": "vibe-onefile",
+    "local": "fixtures/vibe",
+    "shape": "한 파일 몰빵 (바이브코딩)",
+    "why": "우리 타깃 사용자의 실제 코드 모양. 잘 정리된 오픈소스만 재면 이걸 놓친다"
+  },
+  {
     "name": "repomix",
     "url": "https://github.com/yamadashy/repomix.git",
     "shape": "TS CLI / 라이브러리",

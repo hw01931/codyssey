@@ -39,14 +39,25 @@ export function listFiles(repoRoot: string): string[] {
   return walk(repoRoot).filter(r => adapterFor(r))
 }
 
+/**
+ * 파싱하다 실패한 파일들. 통과시키되(P5) 반드시 세어둔다.
+ *
+ * 예전에는 조용히 버렸다. 쿼리 하나가 잘못돼서 408개 중 394개가 사라졌는데
+ * 에러가 한 줄도 안 났다. 조용한 실패는 fail-open 이 아니라 그냥 고장이다.
+ */
+export const parseFailures = new Map<string, string>()
+
 /** 파일 하나 파싱. 실패하면 null (P5: 못 읽은 파일에 대해서는 아무 주장도 하지 않는다). */
 export async function parseFile(repoRoot: string, rel: string, ctx: ResolveCtx): Promise<FileInfo | null> {
   const adapter = adapterFor(rel)
   if (!adapter) return null
   try {
     const src = fs.readFileSync(path.join(repoRoot, rel), 'utf8')
-    return { rel, adapter, projectRoot: ctx.projectRootOf(rel), parsed: await adapter.parse(src, rel) }
-  } catch {
+    const parsed = await adapter.parse(src, rel)
+    parseFailures.delete(rel)
+    return { rel, adapter, projectRoot: ctx.projectRootOf(rel), parsed }
+  } catch (err) {
+    parseFailures.set(rel, err instanceof Error ? err.message : String(err))
     return null
   }
 }
@@ -106,6 +117,7 @@ export function buildGraph(files: Map<string, FileInfo>, ctx: ResolveCtx, repoRo
 export async function scan(repoRoot: string): Promise<ScanResult> {
   const t0 = performance.now()
   const ctx = makeCtx(repoRoot)
+  parseFailures.clear()
   const files = new Map<string, FileInfo>()
   for (const rel of listFiles(repoRoot)) {
     const info = await parseFile(repoRoot, rel, ctx)

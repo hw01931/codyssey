@@ -5,6 +5,24 @@ export type Confidence = 'high' | 'low'
 
 export interface Sym { name: string; kind: string; line: number }
 
+/**
+ * 한 심볼이 다른 심볼을 부르는 것.
+ *
+ * 파일 단위 그래프는 바이브코딩 결과물에서 아무것도 못 본다. 화면 여섯 개가
+ * 한 파일에 들어있으면 파일이 1개라 '여러 곳이 공유하는 파일' 이 성립하지 않는다.
+ * 위험은 그대로인데(formatPrice 를 6곳이 부른다) 우리 눈에만 안 보였다.
+ *
+ * `to` 는 같은 파일의 심볼이거나, import 로 들여온 이름이다.
+ * 후자는 스캐너가 대상 파일까지 이어준다.
+ */
+export interface CallRef {
+  /** 부르는 쪽 최상위 심볼. 모듈 레벨에서 부르면 undefined */
+  from?: string
+  /** 불리는 이름 */
+  to: string
+  line: number
+}
+
 /** import 문 하나. spec 은 아직 해석되지 않은 원문. */
 export interface ImportRef {
   spec: string
@@ -42,6 +60,8 @@ export interface HttpCall {
 
 export interface ParseResult {
   symbols: Sym[]
+  /** 같은 파일 안 또는 import 한 이름을 부르는 관계 */
+  calls: CallRef[]
   imports: ImportRef[]
   /** 로컬 이름 -> import spec.  py: `from routes import orders` => { orders: 'routes.orders' } */
   bindings: Record<string, string>
@@ -52,7 +72,7 @@ export interface ParseResult {
 }
 
 export const emptyParse = (): ParseResult => ({
-  symbols: [], imports: [], bindings: {}, routerDefs: [], routerMounts: [], routes: [], httpCalls: [],
+  symbols: [], calls: [], imports: [], bindings: {}, routerDefs: [], routerMounts: [], routes: [], httpCalls: [],
 })
 
 export interface ResolveCtx {

@@ -19,6 +19,25 @@ const IMPORT_Q = `
  (#match? @fn "^(require)?$"))
 `
 
+/**
+ * 이름을 '쓰는' 자리. 함수 호출과 JSX 사용 둘 다 본다.
+ * React 에서는 <Cart /> 가 곧 호출이다.
+ *
+ * JSX 노드는 tsx/jsx 문법에만 있다. typescript 문법에 넣으면 쿼리 컴파일이
+ * 통째로 실패하고, 그러면 그 파일이 조용히 그래프에서 사라진다.
+ * 실제로 그렇게 408개 중 394개를 잃었다.
+ */
+const USE_BASE = `
+(call_expression function: (identifier) @use)
+(call_expression function: (member_expression object: (identifier) @use))
+`
+const USE_JSX = `
+(jsx_opening_element name: (identifier) @use)
+(jsx_self_closing_element name: (identifier) @use)
+`
+const useQuery = (grammar: string) =>
+  grammar === 'tsx' ? USE_BASE + USE_JSX : USE_BASE
+
 /** fetch(...) 호출. FE->BE 경계의 유일한 단서. */
 const FETCH_Q = `
 (call_expression
@@ -37,8 +56,10 @@ export const tsAdapter: LangAdapter = {
     const root = await parseSource(grammar, src)
     const out = emptyParse()
 
+    const importedAll = new Set<string>()
     for (const m of captures(await getQuery(grammar, 'imports', IMPORT_Q), root)) {
       if (!m.spec) continue
+      for (const n of (m.stmt ? importedNames(m.stmt) : undefined) ?? []) importedAll.add(n)
       out.imports.push({
         spec: m.spec.text,
         line: m.spec.startPosition.row + 1,
@@ -59,6 +80,21 @@ export const tsAdapter: LangAdapter = {
     }
 
     out.symbols = await extractSymbols(grammar, root)
+
+    // 같은 파일 안에서 서로 부르는 관계. 파일이 하나뿐인 프로젝트에서는
+    // 이것만이 유일한 구조 정보다.
+    const own = new Set(out.symbols.map(s => s.name))
+    for (const m of captures(await getQuery(grammar, 'uses', useQuery(grammar)), root)) {
+      const node = m.use
+      if (!node) continue
+      const name = node.text
+      if (name === 'fetch' || RESERVED.has(name)) continue
+      const from = enclosingSymbol(node)
+      if (from === name) continue // 재귀는 관계가 아니다
+      // 자기 파일 심볼이거나 import 로 들여온 이름만 본다. 나머지는 전역/내장이다.
+      if (!own.has(name) && !importedAll.has(name)) continue
+      out.calls.push({ from, to: name, line: node.startPosition.row + 1 })
+    }
 
     return out
   },
@@ -243,5 +279,12 @@ function methodOf(args: Node | undefined): string {
   const m = /\bmethod\s*:\s*['"`](\w+)['"`]/.exec(args.text)
   return m ? m[1].toUpperCase() : 'GET'
 }
+
+/** 언어 내장이라 관계로 볼 필요가 없는 이름들 */
+const RESERVED = new Set([
+  'require', 'console', 'JSON', 'Object', 'Array', 'String', 'Number', 'Boolean', 'Math', 'Date',
+  'Promise', 'Set', 'Map', 'Error', 'RegExp', 'Symbol', 'parseInt', 'parseFloat', 'isNaN',
+  'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval', 'process', 'Buffer',
+])
 
 const posix = (p: string) => p.split(path.sep).join('/')

@@ -14,10 +14,15 @@ import { execFileSync } from 'node:child_process'
 import { scan } from '../src/index/scan.ts'
 import { computeFeatures, autolockCandidates, featuresOf } from '../src/core/features.ts'
 import { computeModules, crossModuleShared } from '../src/core/modules.ts'
+import { buildSymbolGraph, sharedSymbols } from '../src/core/symbols.ts'
+import { createCtx } from '../src/index/scan.ts'
 
 interface RepoSpec {
   name: string
-  url: string
+  /** 원격 저장소 */
+  url?: string
+  /** 저장소에 같이 들어있는 픽스처 */
+  local?: string
   shape: string
   why: string
 }
@@ -40,6 +45,8 @@ interface Score {
   modules: number
   /** 여러 모듈이 함께 쓰는 파일 수. 진입점이 없어도 나오는 신호 */
   shared: number
+  /** 여러 곳이 함께 쓰는 심볼 수. 파일이 몇 개 없어도 나오는 신호 */
+  symShared: number
   ms: number
 }
 
@@ -53,15 +60,15 @@ const scores: Score[] = []
 const missing: string[] = []
 
 for (const spec of specs) {
-  const dir = path.join(CACHE, spec.name)
-  if (!fs.existsSync(dir)) {
+  const dir = spec.local ?? path.join(CACHE, spec.name)
+  if (!spec.local && !fs.existsSync(dir)) {
     if (!PULL) {
       missing.push(spec.name)
       continue
     }
     process.stdout.write(`  받는 중 ${spec.name} ... `)
     try {
-      execFileSync('git', ['clone', '--depth', '1', '-q', spec.url, dir], { stdio: 'ignore' })
+      execFileSync('git', ['clone', '--depth', '1', '-q', spec.url!, dir], { stdio: 'ignore' })
       console.log('완료')
     } catch {
       console.log('실패 (건너뜀)')
@@ -73,6 +80,7 @@ for (const spec of specs) {
   const feat = computeFeatures(graph)
   const mods = computeModules(graph, id => fileInfos.get(id)?.projectRoot ?? '.')
   const shared = crossModuleShared(graph, mods, 3)
+  const symShared = sharedSymbols(buildSymbolGraph(fileInfos, createCtx(dir)), 3)
   const files = graph.nodes.size
   const orphans = [...graph.nodes.keys()].filter(id => featuresOf(feat, id).length === 0).length
   const biggest = Math.max(0, ...feat.roots.map(r => feat.members.get(r.id)?.size ?? 0))
@@ -90,6 +98,7 @@ for (const spec of specs) {
     biggestFeature: files ? biggest / files : 0,
     modules: mods.members.size,
     shared: shared.length,
+    symShared: symShared.length,
     suggestions: autolockCandidates(feat, 3).length,
     ms,
   })
@@ -110,16 +119,16 @@ if (!scores.length) {
 }
 
 console.log(`\n캐시: ${CACHE}\n`)
-const head = ['레포', '파일', '연결', '해석률', '기능', '고아율', '모듈', '공유파일', 'ms']
+const head = ['레포', '파일', '연결', '해석률', '기능', '모듈', '공유파일', '공유심볼', 'ms']
 const rows = scores.map(s => [
   s.name,
   String(s.files),
   String(s.edges),
   pct(s.resolveRate),
   String(s.features),
-  pct(s.orphanRate),
   String(s.modules),
   String(s.shared),
+  String(s.symShared),
   String(Math.round(s.ms)),
 ])
 const w = head.map((h, i) => Math.max(width(h), ...rows.map(r => width(r[i]))))
@@ -132,8 +141,8 @@ console.log('\n판정')
 for (const s of scores) {
   const problems: string[] = []
   if (s.resolveRate < 0.9) problems.push(`import 해석률 ${pct(s.resolveRate)} - 그래프를 믿을 수 없음`)
-  if (s.shared === 0) problems.push('공유 파일을 하나도 못 찾음 - 사용자에게 해줄 말이 없음')
-  if (s.modules < 2) problems.push('모듈이 1개 - 폴더 구조를 못 읽음')
+  // 파일 단위든 심볼 단위든 뭐라도 짚어줘야 한다. 한 파일짜리는 심볼 쪽만 나온다.
+  if (s.shared === 0 && s.symShared === 0) problems.push('지켜야 할 것을 하나도 못 찾음 - 사용자에게 해줄 말이 없음')
   // 고아율은 참고용이다. 테스트/문서/스크립트는 원래 어느 기능에도 안 속한다.
   if (s.orphanRate > 0.9 && s.features > 0) problems.push(`파일 ${pct(s.orphanRate)} 가 기능 밖 - 진입점 탐지가 부족할 수 있음`)
 
@@ -141,7 +150,9 @@ for (const s of scores) {
   for (const p of problems) console.log(`       ${p}`)
 }
 
-const bad = scores.filter(s => s.resolveRate < 0.9 || s.shared === 0 || s.modules < 2 || (s.orphanRate > 0.9 && s.features > 0))
+const bad = scores.filter(
+  s => s.resolveRate < 0.9 || (s.shared === 0 && s.symShared === 0) || (s.orphanRate > 0.9 && s.features > 0),
+)
 console.log(`\n  ${scores.length - bad.length} / ${scores.length} 통과\n`)
 
 function width(s: string) {

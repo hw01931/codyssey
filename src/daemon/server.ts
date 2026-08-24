@@ -4,11 +4,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 import chokidar from 'chokidar'
-import { buildGraph, createCtx, listFiles, parseFile, adapterFor, type FileInfo } from '../index/scan.ts'
+import { buildGraph, createCtx, listFiles, parseFile, parseFailures, adapterFor, type FileInfo } from '../index/scan.ts'
 import { computeFeatures, allFilesOf, autolockCandidates, exclusiveOf, featuresOf, type Features } from '../core/features.ts'
 import { checkEdit, defaultRules, findViolations, inertRules, matches, type Rules, type Verdict } from '../core/rules.ts'
 import { shellWrites } from '../core/shell.ts'
 import { computeModules, consumerModules, crossModuleShared, type Modules } from '../core/modules.ts'
+import { buildSymbolGraph, sharedSymbols, symbolImpact, type SymbolGraph } from '../core/symbols.ts'
 import type { Graph } from '../core/graph.ts'
 import type { ResolveCtx } from '../core/ir.ts'
 import { deltaBrief, promptBrief, sessionBrief, snapshotEdges, type CtxInput } from './context.ts'
@@ -36,6 +37,7 @@ export class Daemon {
   graph!: Graph
   features!: Features
   modules!: Modules
+  symbols!: SymbolGraph
   private names = new Map<string, string[]>()
   labels: Labels = emptyLabels()
   rules: Rules = defaultRules()
@@ -103,6 +105,8 @@ export class Daemon {
     this.features = computeFeatures(this.graph)
     this.modules = computeModules(this.graph, id => this.files.get(id)?.projectRoot ?? '.')
     this.names = nameIndex(this.graph)
+    // 파일이 몇 개 없는 프로젝트에서는 이쪽만 신호를 낸다
+    this.symbols = buildSymbolGraph(this.files, this.ctx)
   }
 
   /** 밀려 있던 파일을 전부 다시 읽는다. 그래프 재구성은 마지막에 한 번만. */
@@ -428,11 +432,25 @@ export class Daemon {
           why: c.modules.map(m => this.say.module(m)),
           kind: 'module' as const,
         })),
+        // 파일 단위로 아무것도 안 나오면(한 파일에 몰아넣은 프로젝트) 심볼 단위로 본다.
+        ...(crossModuleShared(this.graph, this.modules, this.rules.autolock.minModules ?? 3).length
+          ? []
+          : sharedSymbols(this.symbols, this.rules.autolock.minModules ?? 3).map(sy => {
+              const node = this.symbols.nodes.get(sy.id)!
+              return {
+                file: node.file,
+                label: `${node.name} (${this.say.file(node.file)} 안)`,
+                why: sy.callers.map(c => c.split('#')[1] ?? c),
+                kind: 'symbol' as const,
+                symbol: node.name,
+              }
+            })),
       ]
-        .filter((c, i, arr) => !locked.has(c.file) && arr.findIndex(x => x.file === c.file) === i)
+        .filter((c, i, arr) => !locked.has(c.file) && arr.findIndex(x => x.file === c.file && (x as any).symbol === (c as any).symbol) === i)
         .slice(0, 40),
       violations: findViolations(this.rules, this.graph),
       unresolved: this.graph.unresolved,
+      parseFailures: [...parseFailures.entries()].map(([file, error]) => ({ file, error })),
       rules: this.rules,
       foreign: this.foreign,
       activity: this.activity.slice(0, 50),
