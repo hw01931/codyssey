@@ -13,6 +13,24 @@ import { spawnDaemon } from '../setup/init.ts'
  * 조회 자체는 데몬이 이미 다 하고 있으므로 여기서는 얇게 전달만 한다.
  * 그래프를 두 벌 들고 있으면 서로 어긋난다.
  */
+/** 이 파일을 (전이적으로) 쓰는 모든 파일. CLI 의 impact 와 같은 셈법이다. */
+function transitiveUsers(edges: any[], id: string): string[] {
+  const inn = new Map<string, string[]>()
+  for (const e of edges) inn.set(e.to, [...(inn.get(e.to) ?? []), e.from])
+  const seen = new Set([id])
+  const stack = [id]
+  while (stack.length) {
+    const cur = stack.pop()!
+    for (const from of inn.get(cur) ?? []) {
+      if (seen.has(from)) continue
+      seen.add(from)
+      stack.push(from)
+    }
+  }
+  seen.delete(id)
+  return [...seen].sort()
+}
+
 export async function runMcp(repoRoot: string, explicitPort?: number) {
   const port = await resolvePort(repoRoot, explicitPort)
 
@@ -71,7 +89,10 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
         s.nodes.find((n: any) => n.id === file) ?? s.nodes.find((n: any) => n.id.endsWith(file))
       if (!node) return text(`그래프에서 못 찾음: ${file}`)
 
-      const users = s.edges.filter((e: any) => e.to === node.id).map((e: any) => e.from)
+      // CLI 의 impact 는 전이적으로 세는데 여기만 직접 연결만 세면
+      // 같은 이름의 지표가 표면마다 달라진다. 둘 다 같은 값을 내야 한다.
+      const direct = s.edges.filter((e: any) => e.to === node.id).map((e: any) => e.from)
+      const users = transitiveUsers(s.edges, node.id)
       const uses = s.edges.filter((e: any) => e.from === node.id).map((e: any) => e.to)
       const L = [
         `${node.label ?? node.id}  (${node.id})${node.locked ? '  [잠김 - 수정하면 차단됨]' : ''}`,
@@ -79,7 +100,7 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
         node.features.length
           ? `영향 기능 ${node.features.length}개: ${(node.featureLabels ?? node.features).join(', ')}`
           : '어느 기능에도 안 속함',
-        `이 파일을 쓰는 곳 ${users.length}개${users.length ? ': ' + users.slice(0, 20).join(', ') : ''}`,
+        `이 파일을 쓰는 곳 ${users.length}개 (직접 ${direct.length}개)${users.length ? ': ' + users.slice(0, 20).join(', ') : ''}`,
         `이 파일이 쓰는 것 ${uses.length}개${uses.length ? ': ' + uses.slice(0, 20).join(', ') : ''}`,
       ]
       return text(L.join('\n'))

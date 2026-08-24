@@ -40,7 +40,7 @@ codyssey map             draw the structure in your terminal
 codyssey doctor          check that everything is wired correctly
 codyssey impact <file>   what breaks if I change this
 codyssey diff <ref>      how the architecture changed since <ref>
-codyssey mcp             MCP server (4 tools for agents)
+codyssey mcp             MCP server (6 tools for agents)
 ```
 
 ## Support
@@ -168,7 +168,7 @@ AI 가 리팩터링하다 이런 걸 지우는 게 가장 흔한 사고인데, �
 |---|---|---|
 | **차단** | 편집 직전 | 잠긴 파일이면 이유와 함께 막는다 (1.15ms). `Edit`/`Write` 뿐 아니라 `Bash` 도 본다 |
 | **알림** | 세션 시작 · 프롬프트 · 편집 직후 | 기능 목록, 언급된 파일의 영향 범위, 바뀐 연결 |
-| **조회** | 에이전트가 물어볼 때 | MCP 도구 4개: `get_overview` `impact_of` `find_file` `check_edit` |
+| **조회** | 에이전트가 물어볼 때 | MCP 도구 6개: `get_overview` `impact_of` `find_file` `check_edit` `get_unlabeled` `set_labels` |
 
 알림은 **할 말이 없으면 아무것도 넣지 않습니다.** 같은 말을 두 번 하지도 않습니다.
 편집마다 수백 토큰씩 붙이면 도움이 아니라 방해입니다.
@@ -214,6 +214,7 @@ codyssey status               터미널에 요약 출력
 codyssey impact <파일>        이 파일을 고치면 뭐가 영향받나
 codyssey diff <기준>          기준 커밋 대비 아키텍처 변화
 codyssey mcp                  MCP 서버 (에이전트가 물어볼 창구)
+codyssey stop                 백그라운드로 켜진 것 끄기
 codyssey scan                 구조 파일만 만들기
 ```
 

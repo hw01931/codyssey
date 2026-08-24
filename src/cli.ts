@@ -37,6 +37,7 @@ switch (cmd) {
   case 'init': await cmdInit(); break
   case 'start': case 'ui': case 'watch': await cmdStart(); break
   case 'ensure': await cmdEnsure(); break
+  case 'stop': await cmdStop(); break
   case 'doctor': await cmdDoctor(); break
   case 'mcp': await runMcp(path.resolve(root), explicitPort); break
   case 'diff': await cmdDiff(); break
@@ -52,7 +53,8 @@ function help() {
 ${C.b('CODYSSEY')} ${C.dim('- AI 가 구조를 깨뜨리지 않게 지켜주는 도구')}
 
   ${C.b('codyssey init')}            처음 한 번. 설정하고 웹 화면을 엽니다
-  ${C.b('codyssey start')}           웹 화면 + 파일 감시 시작
+  ${C.b('codyssey start')}           웹 화면 + 파일 감시 시작 (Ctrl+C 로 종료)
+  ${C.dim('codyssey stop')}            백그라운드로 켜진 것 끄기
   ${C.dim('codyssey ensure')}          꺼져 있으면 조용히 띄우기 (훅이 자동 호출)
   ${C.b('codyssey doctor')}          설정이 제대로 됐는지 점검
   ${C.dim('codyssey mcp')}             MCP 서버 (에이전트가 구조를 물어볼 창구)
@@ -65,6 +67,7 @@ ${C.b('CODYSSEY')} ${C.dim('- AI 가 구조를 깨뜨리지 않게 지켜주는 
   ${C.dim('--root <경로>')}   대상 폴더 (기본: 현재 폴더)
   ${C.dim('--port <번호>')}   포트 지정 (기본: 프로젝트별로 자동 배정)
   ${C.dim('--no-open')}      브라우저 자동 실행 안 함
+  ${C.dim('--foreground')}   init 이 데몬을 물고 있게 (기본은 백그라운드)
 `)
 }
 
@@ -84,8 +87,46 @@ async function cmdInit() {
   console.log(`\n${C.green('설정 완료.')} 이 프로젝트는 포트 ${C.b(String(r.port))} 를 씁니다.`)
   console.log(`\n${C.yellow('중요:')} 차단이 켜지려면 ${C.b('Claude Code 를 다시 시작')}해야 합니다.`)
   console.log(C.dim('       훅 설정은 세션이 시작될 때 읽힙니다. 지금 세션에는 적용되지 않습니다.'))
-  console.log(C.dim('       다시 시작한 뒤부터는 데몬도 자동으로 켜집니다.\n'))
-  await cmdStart(r.port)
+  console.log(C.dim('       다시 시작한 뒤부터는 데몬도 자동으로 켜집니다.'))
+
+  // 데몬을 포그라운드로 물고 있으면 init 이 영영 끝나지 않는다.
+  // README 는 "AI 에게 시켜도 됩니다" 라고 안내하는데, 에이전트가 실행하면
+  // 무한 대기하다 타임아웃난다. 백그라운드로 띄우고 바로 빠진다.
+  if (has('foreground')) {
+    console.log()
+    await cmdStart(r.port)
+    return
+  }
+
+  const abs = path.resolve(root)
+  if (!(await health(r.port))) {
+    spawnDaemon(abs, r.port)
+    for (let i = 0; i < 20 && !(await health(r.port)); i++) {
+      await new Promise(res => setTimeout(res, 250))
+    }
+  }
+  const url = `http://127.0.0.1:${r.port}`
+  const up = Boolean(await health(r.port))
+  console.log(`\n${up ? C.green('실행 중') : C.yellow('아직 준비 중')}  ${C.blue(url)}`)
+  console.log(C.dim('  끄려면: codyssey stop\n'))
+  if (!has('no-open')) openBrowser(url)
+}
+
+/** 백그라운드로 띄운 데몬을 끈다. */
+async function cmdStop() {
+  const abs = path.resolve(root)
+  const port = await resolvePort(abs, explicitPort)
+  const h = await health(port)
+  if (!h) return console.log('실행 중이 아닙니다.')
+  if (!samePath(h.repoRoot, abs)) {
+    return console.error(`포트 ${port} 는 다른 프로젝트(${h.repoRoot})가 쓰고 있어 끄지 않았습니다.`)
+  }
+  try {
+    await fetch(`http://127.0.0.1:${port}/api/shutdown`, { method: 'POST', signal: AbortSignal.timeout(2000) })
+  } catch {
+    /* 종료 중에는 응답이 끊기는 게 정상이다 */
+  }
+  console.log('종료했습니다.')
 }
 
 async function cmdStart(known?: number) {
@@ -173,7 +214,20 @@ async function cmdDiff() {
   const d0 = new _D(root, 0)
   await d0.fullScan()
   d0.loadRules()
-  const d = await archDiff(root, base, d0.rules, d0.lockedFiles())
+  let d
+  try {
+    d = await archDiff(root, base, d0.rules, d0.lockedFiles())
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (/not a git repository|unknown revision|bad revision|ambiguous argument/i.test(msg)) {
+      console.error(`\n비교할 수 없습니다: '${base}' 를 찾지 못했습니다.`)
+      console.error(C.dim('  git 저장소가 아니거나, 그런 커밋/브랜치가 없습니다.'))
+      console.error(C.dim('  예: codyssey diff HEAD~1   /   codyssey diff origin/main\n'))
+      process.exitCode = 1
+      return
+    }
+    throw err
+  }
   const md = renderDiff(d)
 
   if (has('markdown')) console.log(md)

@@ -54,12 +54,46 @@ export function brokenContracts(
     if (whole) {
       // 파일 전체를 새로 쓰는 중이다. 결과에 이름이 없으면 깨진다.
       if (!inAfter) out.push(c)
+      // 이름은 남았는데 export 만 떼어낸 경우도 깨진다.
+      else if (!isExported(after ?? '', c.name)) out.push(c)
       continue
     }
-    // 조각 편집이다. 사라지는 경우만 잡는다.
-    if (before && mentions(before, c.name) && !inAfter) out.push(c)
+    if (!before) continue
+    // 조각 편집. 이름이 통째로 사라지는 경우.
+    if (mentions(before, c.name) && !inAfter) {
+      out.push(c)
+      continue
+    }
+    // 이름은 그대로인데 export 만 떼는 경우.
+    // `export function f` -> `function f` 는 리네임보다 흔한 사고인데,
+    // 이름 존재 여부만 보면 통과해버린다.
+    if (isExported(before, c.name) && inAfter && !isExported(after ?? '', c.name)) out.push(c)
   }
   return out
+}
+
+/**
+ * 이 텍스트에서 그 이름이 밖으로 나가고 있나.
+ * `export function f` / `export const f` / `export { f }` / `export default f`
+ * 파이썬에는 export 개념이 없어서 항상 true 로 본다 (모듈 최상위면 다 공개).
+ */
+function isExported(text: string, name: string): boolean {
+  const n = escapeRe(name)
+  const decl = '(?:function\\*?|class|const|let|var|type|interface|enum)'
+  const patterns = [
+    // export function f / export const f / export class f ...
+    `export\\s+(?:default\\s+)?(?:async\\s+)?${decl}\\s+${n}\\b`,
+    // export { f }  또는  export { f as g }
+    `export\\s*\\{[^}]*\\b${n}\\b[^}]*\\}`,
+    // export default f
+    `export\\s+default\\s+${n}\\b`,
+  ]
+  if (patterns.some(pat => new RegExp(pat).test(text))) return true
+
+  // 파이썬에는 export 가 없다. 모듈 최상위면 다 공개이므로 '선언되어 있으면 공개' 로 본다.
+  // 이 조각에 JS 식 선언 자체가 안 보이면 판단 근거가 없으니 공개로 둔다.
+  // (P4: 확신이 없으면 깨졌다고 하지 않는다)
+  return !new RegExp(`(?:function|class|const|let|var)\\s+${n}\\b`).test(text)
 }
 
 /** 파일이 통째로 사라질 때(rm/mv) 깨지는 것들. */

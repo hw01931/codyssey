@@ -18,6 +18,9 @@ import { describeFeature, describeFile, describeModule, emptyLabels, loadLabels,
 
 const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui')
 
+/** 바뀌면 다시 읽어야 하는 설정 파일들 */
+const CONFIG_FILES = ['.codyssey/rules.yaml', '.codyssey/labels.yaml']
+
 /** 한 명령이 여러 파일을 건드리면 제일 센 판정이 이긴다. */
 const RANK = { allow: 0, ask: 1, block: 2 } as const
 
@@ -49,7 +52,9 @@ export class Daemon {
   private ctx!: ResolveCtx
   private server?: http.Server
   private watcher?: chokidar.FSWatcher
+  private configWatcher?: chokidar.FSWatcher
   private rebuildTimer?: NodeJS.Timeout
+  private configTimer?: NodeJS.Timeout
   /** 디바운스 동안 밀린 변경 파일들. 타이머 하나에 파일 하나만 실으면 나머지가 사라진다. */
   private pending = new Set<string>()
 
@@ -73,6 +78,7 @@ export class Daemon {
 
   async stop() {
     await this.watcher?.close()
+    await this.configWatcher?.close()
     await new Promise<void>(r => (this.server ? this.server.close(() => r()) : r()))
   }
 
@@ -135,6 +141,30 @@ export class Daemon {
     // 타이머 하나에 파일 하나만 실으면, 여러 파일이 한꺼번에 바뀔 때(git checkout,
     // 포매터 일괄 실행) 마지막 하나만 남고 나머지가 조용히 사라진다. 실측으로 4개 중
     // 3개가 누락됐다. 밀린 파일을 모아뒀다가 한 번에 처리한다.
+    // 설정 파일은 따로 본다.
+    //
+    // 위 감시자는 .codyssey 를 통째로 무시한다(생성물이 대부분이라). 그런데 그러면
+    // 사람이 rules.yaml 에 직접 protect 를 적어도 반영되지 않는다. README 가
+    // "직접 써도 됩니다" 라고 안내하므로, 잠갔다고 믿는데 안 잠긴 상태가 만들어진다.
+    // 무시 규칙에 예외를 뚫는 것보다 감시자를 하나 더 두는 쪽이 확실하다.
+    // 폴더가 없으면 감시가 안 붙는다. 아직 없으면 만들어두고 폴더째 본다.
+    const configDir = path.join(this.repoRoot, '.codyssey')
+    fs.mkdirSync(configDir, { recursive: true })
+    // ignoreInitial 을 켜면 안 된다. 감시자가 초기 스캔을 하는 동안 파일이 만들어지면
+    // 그걸 '원래 있던 파일' 로 보고 삼켜버린다. 그러면 설정을 써도 영영 반영되지 않는다.
+    // 시작 직후 한 번 더 읽는 비용은 무시할 만하다.
+    this.configWatcher = chokidar.watch(configDir, { ignoreInitial: false, depth: 0 })
+    const onConfig = (abs: string) => {
+      const norm = abs.replace(/\\/g, '/')
+      if (!CONFIG_FILES.some(f => norm.endsWith(f))) return
+      clearTimeout(this.configTimer)
+      this.configTimer = setTimeout(() => {
+        this.loadRules()
+        this.loadLabels()
+      }, 80)
+    }
+    this.configWatcher.on('add', onConfig).on('change', onConfig).on('unlink', onConfig)
+
     const onChange = (abs: string) => {
       const rel = this.toRel(abs)
       if (!adapterFor(rel)) return
@@ -183,18 +213,44 @@ export class Daemon {
   }
 
   /** 기능 단위 잠금. 기본은 그 기능만 쓰는 파일에만 걸린다. */
-  setFeatureLock(id: string, locked: boolean, scope: 'exclusive' | 'all' = 'exclusive', reason?: string) {
+  setFeatureLock(id: unknown, locked: boolean, scope: 'exclusive' | 'all' = 'exclusive', reason?: string):
+    { ok: true } | { ok: false; error: string } {
+    if (typeof id !== 'string' || !id.trim() || !this.features.entries.some(e => e.id === id)) {
+      return { ok: false, error: `그런 기능이 없습니다: ${JSON.stringify(id)}` }
+    }
     this.rules.features = (this.rules.features ?? []).filter(f => f.id !== id)
     if (locked) this.rules.features.push({ id, scope, reason: reason ?? `'${id}' 기능 잠금` })
     this.rules.features.sort((a, b) => (a.id < b.id ? -1 : 1))
     this.saveRules()
+    return { ok: true }
   }
 
-  setLock(file: string, locked: boolean, reason?: string) {
-    this.rules.protect = this.rules.protect.filter(p => p.path !== file)
-    if (locked) this.rules.protect.push({ path: file, reason: reason ?? '수동 잠금' })
+  /**
+   * 잠금 규칙을 쓴다.
+   *
+   * 경로를 검증하지 않으면 `path: "undefined"` 같은 쓰레기가 rules.yaml 에 그대로
+   * 저장되고, 그게 SessionStart 브리핑에 "잠긴 파일: undefined" 로 새어나간다.
+   * 가드레일 도구가 자기 설정을 못 지키면 신뢰가 통째로 무너진다.
+   */
+  setLock(file: unknown, locked: boolean, reason?: string): { ok: true } | { ok: false; error: string } {
+    const path = typeof file === 'string' ? file.trim() : ''
+    if (!path || path === 'undefined' || path === 'null') {
+      return { ok: false, error: `잠글 파일 경로가 필요합니다 (받은 값: ${JSON.stringify(file)})` }
+    }
+    const rel = this.toRel(path)
+    if (rel.startsWith('../')) {
+      return { ok: false, error: `이 프로젝트 밖의 파일입니다: ${path}` }
+    }
+    // 글롭이 아니면서 그래프에도 없으면 오타일 가능성이 높다
+    if (!rel.includes('*') && !this.graph.nodes.has(rel)) {
+      return { ok: false, error: `그런 파일이 없습니다: ${rel}` }
+    }
+
+    this.rules.protect = this.rules.protect.filter(p => p.path !== rel)
+    if (locked) this.rules.protect.push({ path: rel, reason: reason?.trim() || '수동 잠금' })
     this.rules.protect.sort((a, b) => (a.path < b.path ? -1 : 1))
     this.saveRules()
+    return { ok: true }
   }
 
   // -------------------------------------------------------------- 판정
@@ -553,19 +609,21 @@ export class Daemon {
 
       if (url.pathname === '/api/lock' && req.method === 'POST') {
         const body = await readJson(req)
-        this.setLock(String(body.file), Boolean(body.locked), body.reason ? String(body.reason) : undefined)
-        return send(200, { ok: true, rules: this.rules })
+        const r = this.setLock(body.file, Boolean(body.locked), body.reason ? String(body.reason) : undefined)
+        if (!r.ok) return send(400, r)
+        return send(200, { ok: true, locked: this.lockedFiles().size })
       }
 
       if (url.pathname === '/api/lock-feature' && req.method === 'POST') {
         const body = await readJson(req)
-        this.setFeatureLock(
-          String(body.id),
+        const r = this.setFeatureLock(
+          body.id,
           Boolean(body.locked),
           body.scope === 'all' ? 'all' : 'exclusive',
           body.reason ? String(body.reason) : undefined,
         )
-        return send(200, { ok: true, rules: this.rules })
+        if (!r.ok) return send(400, r)
+        return send(200, { ok: true, locked: this.lockedFiles().size })
       }
 
       if (url.pathname === '/api/labels' && req.method === 'POST') {
@@ -590,6 +648,12 @@ export class Daemon {
           [...this.modules.members.keys()],
           this.labels,
         ))
+      }
+
+      if (url.pathname === '/api/shutdown' && req.method === 'POST') {
+        send(200, { ok: true })
+        setTimeout(() => void this.stop().then(() => process.exit(0)), 50)
+        return
       }
 
       if (url.pathname === '/api/rescan' && req.method === 'POST') {
