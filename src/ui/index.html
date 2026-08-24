@@ -109,6 +109,29 @@
   .segbtn + .segbtn { border-left: 1px solid var(--line); }
   .segbtn.on { background: var(--accent); color: #fff; }
   .toggle { font-size: 12px; color: var(--fg2); display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  /* 첫 화면 */
+  .home { padding: 18px; border-bottom: 1px solid var(--line); background: var(--bg2); }
+  .home.hidden { display: none; }
+  .home h1 { font-size: 17px; margin: 0 0 4px; font-weight: 700; }
+  .home .lead { color: var(--fg2); font-size: 13px; margin: 0 0 14px; }
+  .todo {
+    display: flex; align-items: center; gap: 12px; padding: 11px 13px; margin-bottom: 8px;
+    border: 1px solid var(--line); border-radius: 9px; background: var(--bg);
+  }
+  .todo.warn { border-color: var(--lock); background: var(--lock-bg); }
+  .todo .txt { flex: 1; font-size: 13px; line-height: 1.5; }
+  .todo .txt b { font-weight: 700; }
+  .todo .sub { color: var(--fg2); font-size: 12px; }
+  .home .more { margin-top: 12px; font-size: 12px; color: var(--fg2); }
+  .home .more a { color: var(--accent); cursor: pointer; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip {
+    font-size: 12px; padding: 3px 10px; border-radius: 20px;
+    background: var(--bg3); color: var(--fg); cursor: pointer;
+  }
+  .chip:hover { background: var(--accent); color: #fff; }
+  .chip.locked { background: var(--lock-bg); color: var(--lock); }
+
   .banner {
     background: var(--lock-bg); color: var(--lock); border-bottom: 1px solid var(--lock);
     padding: 9px 18px; font-size: 13px;
@@ -122,8 +145,8 @@
   <span><span class="dot" id="dot"></span></span>
   <div class="counts">
     <span>파일 <b id="c-files">-</b></span>
-    <span>기능 <b id="c-features">-</b></span>
-    <span>잠김 <b id="c-locks">-</b></span>
+    <span>화면·기능 <b id="c-features">-</b></span>
+    <span>지키는 중 <b id="c-locks">-</b></span>
   </div>
   <div class="spacer"></div>
   <span id="shown" class="shown"></span>
@@ -142,26 +165,32 @@
 
 <div id="banner"></div>
 
+<!--
+  첫 화면은 '지금 어떤 상태이고 무엇을 하면 되는가' 다.
+  그림부터 보여주면 코드를 모르는 사람은 거기서 닫는다.
+-->
+<div id="home"></div>
+
 <main>
   <aside>
     <section>
-      <h2>기능</h2>
-      <p class="hint">사용자가 실제로 쓰는 화면과 API. 클릭하면 그 기능이 쓰는 파일만 보여줍니다.</p>
+      <h2>화면과 기능</h2>
+      <p class="hint">사용자가 실제로 쓰는 화면과 API 입니다. 눌러보면 그 화면이 쓰는 파일만 보입니다.</p>
       <div class="item active" data-feature="" id="feat-all">
-        <span>전체 보기</span>
+        <span>전부 보기</span>
       </div>
       <div id="features"></div>
     </section>
 
     <section>
-      <h2>모듈</h2>
-      <p class="hint">폴더로 나눈 코드 묶음. 클릭하면 그 안만 보여줍니다.</p>
+      <h2>폴더 묶음</h2>
+      <p class="hint">비슷한 파일끼리 묶어놓은 것입니다. 눌러보면 그 안만 보입니다.</p>
       <div id="modules"></div>
     </section>
 
     <section>
-      <h2>잠금 제안</h2>
-      <p class="hint">여러 기능이 같이 쓰는 파일입니다. 여기가 깨지면 여러 곳이 한꺼번에 망가집니다.</p>
+      <h2>지켜야 할 파일</h2>
+      <p class="hint">여러 화면이 같이 쓰는 파일입니다. 여기가 깨지면 여러 곳이 한꺼번에 망가집니다.</p>
       <div id="suggestions"></div>
     </section>
   </aside>
@@ -170,28 +199,29 @@
 
   <aside class="right">
     <section id="detail-wrap">
-      <h2>선택한 파일</h2>
-      <div id="detail"><p class="empty">가운데 그림에서 상자를 클릭해 보세요.</p></div>
+      <h2>고른 파일</h2>
+      <div id="detail"><p class="empty">가운데 그림에서 상자를 눌러보세요.</p></div>
     </section>
 
     <section>
-      <h2>활동</h2>
-      <p class="hint">AI가 파일을 고치려 할 때 여기에 기록됩니다.</p>
+      <h2>AI가 한 일</h2>
+      <p class="hint">AI가 파일을 고치려 할 때마다 여기에 남습니다.</p>
       <div id="activity"><p class="empty">아직 없습니다.</p></div>
     </section>
   </aside>
 </main>
 
 <div class="legend">
-  <span><span class="swatch" style="background:var(--bg3);border:2px solid var(--accent)"></span>기능 시작점</span>
+  <span><span class="swatch" style="background:var(--bg3);border:2px solid var(--accent)"></span>시작하는 곳</span>
   <span><span class="swatch" style="background:var(--lock-bg);border:2px solid var(--lock)"></span>잠긴 파일</span>
-  <span><span class="swatch" style="background:var(--accent)"></span>프론트 → 백엔드 호출</span>
+  <span><span class="swatch" style="background:var(--accent)"></span>화면 → 서버 호출</span>
 </div>
 
 <script>
 const $ = s => document.querySelector(s)
 let S = null, selected = null, activeFeature = '', activeModule = '', showEmpty = false, zoom = 'fit'
 /** 큰 레포에서 전체 그래프는 실타래가 된다. 기본은 '주변만'. */
+let homeClosed = false
 let scope = 'near'
 /** 전체 보기에서 파일까지 펼칠지. 기본은 모듈로 접어서 본다. */
 let expandAll = false
@@ -215,11 +245,72 @@ async function load() {
   render()
 }
 
+/**
+ * 첫 화면. 코드를 모르는 사람이 열었을 때 '무슨 프로젝트고 지금 뭘 하면 되는지'
+ * 만 보이면 된다. 그림은 그 아래에 있고, 필요하면 접을 수 있다.
+ */
+function renderHome() {
+  const el = $('#home')
+  if (!el) return
+  if (homeClosed) { el.className = 'home hidden'; el.innerHTML = ''; return }
+
+  const feats = S.features ?? []
+  const sugg = S.suggestions ?? []
+  const locked = S.nodes.filter(n => n.locked)
+  const blocked = (S.activity ?? []).filter(a => a.action === 'block' || a.action === 'ask')
+
+  const todos = []
+  if (sugg.length) {
+    todos.push(`<div class="todo warn">
+      <div class="txt">
+        <b>여러 화면이 같이 쓰는 파일 ${sugg.length}개</b>를 찾았습니다.
+        <div class="sub">여기가 깨지면 여러 곳이 한꺼번에 망가집니다. 잠가두면 AI 가 함부로 못 고칩니다.</div>
+      </div>
+      <button class="danger" id="lock-all">전부 지키기</button>
+    </div>`)
+  }
+  if (locked.length) {
+    todos.push(`<div class="todo">
+      <div class="txt">
+        <b>${locked.length}개 파일을 지키는 중</b>입니다.
+        <div class="sub">${locked.slice(0, 3).map(n => esc(n.label ?? n.id)).join(', ')}${locked.length > 3 ? ` 외 ${locked.length - 3}개` : ''}</div>
+      </div>
+    </div>`)
+  }
+  if (blocked.length) {
+    const last = blocked[0]
+    todos.push(`<div class="todo">
+      <div class="txt">
+        <b>AI 가 방금 막혔습니다</b>
+        <div class="sub">${esc(last.reason ?? '')}</div>
+      </div>
+    </div>`)
+  }
+  if (!todos.length) {
+    todos.push(`<div class="todo">
+      <div class="txt"><b>아직 지킬 파일이 없습니다.</b>
+      <div class="sub">프로젝트가 커지면 여기에 제안이 올라옵니다.</div></div>
+    </div>`)
+  }
+
+  el.className = 'home'
+  el.innerHTML = `
+    <h1>이 프로젝트는 ${feats.length ? `화면과 기능 ${feats.length}개` : `파일 ${S.counts.files}개`}로 되어 있습니다</h1>
+    <p class="lead">CODYSSEY 는 AI 가 중요한 파일을 고치려 할 때 대신 막아줍니다.</p>
+    ${feats.length ? `<div class="chips">${feats
+      .slice(0, 10)
+      .map(f => `<span class="chip ${f.locked ? 'locked' : ''}" data-feature="${esc(f.id)}">${f.locked ? '🔒 ' : ''}${esc(f.label ?? f.id)}</span>`)
+      .join('')}</div>` : ''}
+    <div style="margin-top:14px">${todos.join('')}</div>
+    <div class="more"><a id="home-close">닫고 구조 보기 ↓</a></div>`
+}
+
 function render() {
   $('#banner').innerHTML = S.foreign
     ? `<div class="banner">이 프로그램이 보고 있는 폴더 밖의 파일 요청이 ${S.foreign}건 들어왔습니다.
        다른 프로젝트의 설정이 이 포트를 가리키고 있습니다. 그쪽에서 <b>codyssey init</b> 을 다시 실행하세요.</div>`
     : ''
+  renderHome()
   for (const b of document.querySelectorAll('.segbtn')) b.classList.toggle('on', b.dataset.scope === scope && !activeFeature)
   const chk = $('#chk-empty'); if (chk) chk.checked = showEmpty
   $('#c-files').textContent = S.counts.files
@@ -229,12 +320,12 @@ function render() {
   $('#features').innerHTML = S.features.map(f => `
     <div class="feat ${f.locked ? 'locked' : ''}">
       <div class="item ${activeFeature === f.id ? 'active' : ''}" data-feature="${esc(f.id)}">
-        <span>${f.locked ? '🔒 ' : ''}${esc(label(f))}</span><span class="num">${f.size}</span>
+        <span>${f.locked ? '🔒 ' : ''}${esc(f.label ?? label(f))}</span><span class="num">${f.size}</span>
       </div>
       <div class="featbar">
         <button class="tiny ${f.locked ? '' : 'danger'}"
                 data-featlock="${esc(f.id)}" data-unlock="${f.locked ? '1' : ''}">
-          ${f.locked ? '기능 잠금 해제' : `이 기능 잠그기 (${f.exclusive}개)`}
+          ${f.locked ? '지키기 해제' : `이 화면 지키기 (파일 ${f.exclusive}개)`}
         </button>
       </div>
     </div>`).join('')
@@ -243,18 +334,19 @@ function render() {
   $('#suggestions').innerHTML = S.suggestions.length
     ? S.suggestions.map(s => `
       <div class="card">
-        <div class="path">${esc(s.file)}</div>
+        <div><b>${esc(s.label ?? s.file.split('/').pop())}</b></div>
+        <div class="path" style="opacity:.7">${esc(s.file)}</div>
         <div>${s.why.map(f => `<span class="badge">${esc(shortFeature(f))}</span>`).join('')}</div>
-        <div class="hint" style="margin:4px 0 0">${s.kind === 'module' ? '모듈 ' + s.why.length + '곳이 함께 씁니다' : '기능 ' + s.why.length + '개가 함께 씁니다'}</div>
+        <div class="hint" style="margin:4px 0 0">${s.why.length}곳이 함께 씁니다</div>
         <div class="row" style="margin-top:8px">
-          <button class="small danger" data-lock="${esc(s.file)}">잠그기</button>
+          <button class="small danger" data-lock="${esc(s.file)}">지키기</button>
         </div>
       </div>`).join('')
     : '<p class="empty">제안할 게 없습니다.</p>'
 
   $('#modules').innerHTML = (S.modules ?? []).slice(0, 12).map(m => `
     <div class="item ${activeModule === m.name && scope === 'module' ? 'active' : ''}" data-module="${esc(m.name)}">
-      <span class="path" style="font-size:12px">${esc(m.name)}</span><span class="num">${m.files}</span>
+      <span>${esc(m.label ?? m.name)}<br><span class="path" style="opacity:.6">${esc(m.name)}</span></span><span class="num">${m.files}</span>
     </div>`).join('') || '<p class="empty">-</p>'
 
   $('#activity').innerHTML = S.activity.length
@@ -445,7 +537,7 @@ function viewModel() {
     const a = modOf.get(e.from)
     const b = modOf.get(e.to)
     if (!a || !b || a === b || !stat.has(a) || !stat.has(b)) continue
-    const key = a + ' ' + b
+    const key = a + ' >> ' + b
     const cur = pairs.get(key) ?? { from: a, to: b, kind: e.kind, confidence: 'high', n: 0 }
     cur.n++
     if (e.kind === 'http') cur.kind = 'http'
@@ -636,10 +728,10 @@ function renderDetail() {
     $('#detail').innerHTML = `
       <p class="hint">가운데 그림에서 상자를 클릭하면 그 파일이 어디에 쓰이는지 보여줍니다.</p>
       ${top ? `<div class="card">
-        <h2>가장 위험한 파일</h2>
+        <h2>제일 조심할 파일</h2>
         <div class="path">${esc(top.file)}</div>
         <p class="hint" style="margin:6px 0 8px">${top.kind === 'module' ? '모듈' : '기능'} ${top.why.length}곳이 함께 씁니다. 여기가 깨지면 ${top.why.length}곳이 한꺼번에 망가집니다.</p>
-        <button class="small danger" data-lock="${esc(top.file)}">잠그기</button>
+        <button class="small danger" data-lock="${esc(top.file)}">지키기</button>
       </div>` : ''}
       ${S.violations.length ? `<div class="card warn"><h2>규칙 위반 ${S.violations.length}건</h2>
         ${S.violations.map(v => `<div class="path">${esc(v.from)} → ${esc(v.to)}</div>`).join('')}</div>` : ''}`
@@ -651,25 +743,26 @@ function renderDetail() {
 
   $('#detail').innerHTML = `
     <div class="card ${n.locked ? 'warn' : ''}">
-      <div class="path" style="font-size:13px">${esc(selected)}</div>
+      <div style="font-size:14px;font-weight:600">${esc(n.label ?? selected.split('/').pop())}</div>
+      <div class="path" style="opacity:.7">${esc(selected)}</div>
       <div style="margin-top:7px">
         ${n.locked ? '<span class="badge lock">🔒 잠김</span>' : ''}
-        ${n.module ? `<span class="badge">${esc(n.module)}</span>` : ''}
-        ${n.features.map(f => `<span class="badge">${esc(shortFeature(f))}</span>`).join('') || '<span class="badge">어느 기능에도 안 쓰임</span>'}
+        ${n.module ? `<span class="badge">${esc(n.moduleLabel ?? n.module)}</span>` : ''}
+        ${(n.featureLabels ?? n.features).map(f => `<span class="badge">${esc(f)}</span>`).join('') || '<span class="badge">아직 아무 화면에도 안 쓰임</span>'}
       </div>
       <div class="row" style="margin-top:10px">
         <button class="small ${n.locked ? '' : 'danger'}" data-lock="${esc(selected)}" data-unlock="${n.locked ? '1' : ''}">
-          ${n.locked ? '잠금 해제' : '잠그기'}
+          ${n.locked ? '지키기 해제' : '지키기'}
         </button>
       </div>
-      ${suggestion ? '<p class="hint" style="margin:9px 0 0">여러 기능이 공유합니다. 잠그면 AI가 함부로 못 고칩니다.</p>' : ''}
+      ${suggestion ? '<p class="hint" style="margin:9px 0 0">여러 화면이 함께 씁니다. 지켜두면 AI 가 고치기 전에 먼저 물어봅니다.</p>' : ''}
     </div>
     <div class="card">
-      <h2>이 파일을 쓰는 곳 (${usedBy.length})</h2>
+      <h2>이 파일을 쓰는 곳 ${usedBy.length}개</h2>
       ${usedBy.length ? usedBy.map(f => `<div class="path">${esc(f)}</div>`).join('') : '<p class="empty">없음</p>'}
     </div>
     <div class="card">
-      <h2>이 파일이 쓰는 것 (${uses.length})</h2>
+      <h2>이 파일이 쓰는 것 ${uses.length}개</h2>
       ${uses.length ? uses.map(f => `<div class="path">${esc(f)}</div>`).join('') : '<p class="empty">없음</p>'}
     </div>`
 }
@@ -719,6 +812,24 @@ document.addEventListener('click', async ev => {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ file, locked }),
     })
+    await load()
+    return
+  }
+
+  if (ev.target.id === 'home-close') { homeClosed = true; zoom = 'fit'; render(); return }
+
+  if (ev.target.id === 'lock-all') {
+    const files = (S.suggestions ?? []).map(s => s.file)
+    if (!files.length) return
+    if (!confirm(`파일 ${files.length}개를 지킵니다.
+AI 가 이 파일들을 고치려 하면 먼저 물어봅니다.`)) return
+    ev.target.disabled = true
+    for (const file of files) {
+      await fetch('/api/lock', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ file, locked: true, reason: '여러 화면이 함께 쓰는 파일' }),
+      })
+    }
     await load()
     return
   }

@@ -418,11 +418,13 @@ export class Daemon {
       suggestions: [
         ...autolockCandidates(this.features, this.rules.autolock.minFeatures).map(c => ({
           file: c.file,
+          label: this.say.file(c.file),
           why: c.features.map(f => this.say.feature(f)),
           kind: 'feature' as const,
         })),
         ...crossModuleShared(this.graph, this.modules, this.rules.autolock.minModules ?? 3).map(c => ({
           file: c.file,
+          label: this.say.file(c.file),
           why: c.modules.map(m => this.say.module(m)),
           kind: 'module' as const,
         })),

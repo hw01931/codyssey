@@ -75,6 +75,12 @@ CODYSSEY는 `PreToolUse` 훅에서 차단합니다. 그게 유일하게 강제�
 
 ## 시작하기
 
+**AI 에게 시켜도 됩니다.** Claude Code 에 이렇게 말하세요:
+
+> "codyssey 를 설치해줘. `npx codyssey init` 실행하고, 끝나면 나한테 Claude Code 를 다시 시작하라고 알려줘."
+
+직접 치려면:
+
 ```bash
 npx codyssey init
 ```
