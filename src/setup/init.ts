@@ -1,7 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 import { scan } from '../index/scan.ts'
 import { computeFeatures, autolockCandidates } from '../core/features.ts'
@@ -204,15 +203,39 @@ function mergeHooks(settingsPath: string, port: number): boolean {
 const isStarter = (cmd: string) => /codyssey/i.test(cmd) && /\bensure\b/.test(cmd)
 
 /**
- * 훅에서 실행할 명령. 개발 중에는 이 저장소의 cli.ts 를, 배포 후에는 npx 를 쓴다.
- * 어느 쪽이든 이미 떠 있으면 아무것도 안 하고 즉시 끝난다.
+ * 지금 돌고 있는 CLI 의 실제 경로.
+ *
+ * `new URL('../cli.ts', import.meta.url)` 로 추측하면 안 된다. 번들된 배포본에서는
+ * `dist/cli.js` 가 실행되는데 그 계산은 없는 경로(`../cli.ts`)를 가리킨다.
+ * 그래서 배포본에서 데몬이 영영 안 떴고, SessionStart 훅도 무력이었다.
+ * 실행 중인 파일을 그대로 쓰는 게 유일하게 안전하다.
+ */
+function selfEntry(): { path: string; isSource: boolean } | null {
+  const p = process.argv[1]
+  if (!p || !fs.existsSync(p)) return null
+  return { path: path.resolve(p), isSource: p.endsWith('.ts') }
+}
+
+/** 실행 명령을 만든다. 소스면 타입 스트립 플래그가 필요하고, 번들이면 그냥 실행한다. */
+function selfCommand(args: string[]): { command: string; args: string[] } {
+  const self = selfEntry()
+  if (!self) return { command: 'npx', args: ['-y', 'codyssey', ...args] }
+  return {
+    command: process.execPath,
+    args: self.isSource ? ['--experimental-strip-types', self.path, ...args] : [self.path, ...args],
+  }
+}
+
+const quoted = (s: string) => (/[\s"]/.test(s) ? `"${s.split(path.sep).join('/')}"` : s)
+
+/**
+ * 훅에서 실행할 명령. 지금 돌고 있는 CLI 를 그대로 다시 부른다.
+ * 이미 떠 있으면 아무것도 안 하고 즉시 끝난다.
  */
 function starterCommand(port: number): string {
-  const entry = fileURLToPath(new URL('../cli.ts', import.meta.url))
   const target = '"${CLAUDE_PROJECT_DIR}"'
-  return fs.existsSync(entry)
-    ? `node --experimental-strip-types "${entry.split(path.sep).join('/')}" ensure --root ${target} --port ${port}`
-    : `npx -y codyssey ensure --root ${target} --port ${port}`
+  const { command, args } = selfCommand(['ensure', '--root', '__TARGET__', '--port', String(port)])
+  return [quoted(command), ...args.map(a => (a === '__TARGET__' ? target : quoted(a)))].join(' ')
 }
 
 /** Claude Code 가 읽는 프로젝트 MCP 설정. 기존 서버는 건드리지 않는다. */
@@ -235,14 +258,7 @@ function registerMcp(root: string, port: number): boolean {
 }
 
 function mcpEntry(port: number) {
-  const entry = fileURLToPath(new URL('../cli.ts', import.meta.url))
-  const dev = fs.existsSync(entry)
-  return {
-    command: dev ? process.execPath : 'npx',
-    args: dev
-      ? ['--experimental-strip-types', entry.split(path.sep).join('/'), 'mcp', '--port', String(port)]
-      : ['-y', 'codyssey', 'mcp', '--port', String(port)],
-  }
+  return selfCommand(['mcp', '--port', String(port)])
 }
 
 /**
@@ -259,10 +275,8 @@ function installGitHook(root: string): 'wrote' | string | null {
     const cur = fs.readFileSync(p, 'utf8')
     return cur.includes('codyssey') ? '이미 설정됨' : '이미 다른 훅이 있음'
   }
-  const entry = fileURLToPath(new URL('../cli.ts', import.meta.url))
-  const cmd = fs.existsSync(entry)
-    ? `node --experimental-strip-types "${entry.split(path.sep).join('/')}" scan`
-    : 'npx -y codyssey scan'
+  const { command, args } = selfCommand(['scan'])
+  const cmd = [quoted(command), ...args.map(quoted)].join(' ')
   const script = [
     '#!/bin/sh',
     '# codyssey - 커밋할 때 구조도를 최신으로 유지합니다.',
@@ -300,12 +314,13 @@ export async function isAlive(port: number): Promise<boolean> {
  * SessionStart 훅에서 부르면 사용자가 아무것도 실행할 필요가 없다.
  */
 export function spawnDaemon(repoRoot: string, port: number) {
-  const entry = fileURLToPath(new URL('../cli.ts', import.meta.url))
-  const child = spawn(
-    process.execPath,
-    ['--experimental-strip-types', entry, 'start', '--root', repoRoot, '--port', String(port), '--no-open'],
-    { detached: true, stdio: 'ignore', cwd: repoRoot },
-  )
+  const { command, args } = selfCommand(['start', '--root', repoRoot, '--port', String(port), '--no-open'])
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: 'ignore',
+    cwd: repoRoot,
+    shell: command === 'npx',
+  })
   child.unref()
 }
 
