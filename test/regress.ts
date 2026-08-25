@@ -136,6 +136,51 @@ const mcpUsers = (() => {
 })()
 eq('전이적으로 세는 값이 같다', mcpUsers.sort(), cliUsers.sort())
 
+// ---------------------------------------------------------------- 8. 배포본 실행 경로
+
+console.log(`${NL}[훅이 실제로 존재하는 파일을 부른다]`)
+// 자기 위치를 new URL('../cli.ts', import.meta.url) 로 추측하면 번들된 배포본에서
+// 없는 경로가 나온다. 그러면 데몬이 영영 안 뜨는데 에러는 하나도 안 난다.
+// 개발 중에는 100% 통과하므로 여기서 고정한다.
+{
+  const homeTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codyssey-entry-'))
+  fs.cpSync('fixtures/vibe', homeTmp, { recursive: true })
+  fs.mkdirSync(path.join(homeTmp, '.git', 'hooks'), { recursive: true }) // git 훅을 심으려면 .git 이 있어야 한다
+  const { init } = await import('../src/setup/init.ts')
+  await init(homeTmp, 7795)
+
+  const settings = JSON.parse(fs.readFileSync(path.join(homeTmp, '.claude', 'settings.json'), 'utf8'))
+  const mcp = JSON.parse(fs.readFileSync(path.join(homeTmp, '.mcp.json'), 'utf8'))
+
+  /**
+   * 명령줄에서 실행될 진입 파일을 꺼낸다.
+   * 테스트로 돌 때는 test/regress.ts, 배포본에서는 dist/cli.js 라 이름을 못 박으면 안 된다.
+   * 확장자만 보고 고른다.
+   */
+  const entryOf = (argv: string[]) =>
+    argv.map(a => a.replace(/"/g, '')).find(a => !a.startsWith('--') && /\.(ts|js|mjs|cjs)$/.test(a))
+
+  const hookCmd: string = settings.hooks.SessionStart[0].hooks[0].command
+  const hookEntry = entryOf(hookCmd.split(/\s+/))
+  ok('SessionStart 훅이 진입 파일을 지목한다', !!hookEntry, hookCmd.slice(0, 80))
+  ok(
+    'SessionStart 훅이 부르는 파일이 실제로 있다',
+    !!hookEntry && fs.existsSync(hookEntry.replace(/"/g, '')),
+    hookEntry ?? '',
+  )
+
+  const mcpEntry = entryOf(mcp.mcpServers.codyssey.args ?? [])
+  ok('MCP 가 부르는 파일이 실제로 있다', !!mcpEntry && fs.existsSync(mcpEntry.replace(/"/g, '')), mcpEntry ?? '')
+
+  const gitHook = fs.readFileSync(path.join(homeTmp, '.git', 'hooks', 'pre-commit'), 'utf8')
+  const gitEntry = entryOf(gitHook.split(/\s+/))
+  ok('git 훅이 부르는 파일이 실제로 있다', !!gitEntry && fs.existsSync(gitEntry.replace(/"/g, '')), gitEntry ?? '')
+
+  ok('경로를 추측하지 않는다', !hookCmd.includes('../cli.'), hookCmd.includes('../cli.') ? '상대경로 추측 발견' : '')
+
+  fs.rmSync(homeTmp, { recursive: true, force: true })
+}
+
 // ---------------------------------------------------------------- 정리
 
 await daemon.stop()
