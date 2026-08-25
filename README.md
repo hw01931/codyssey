@@ -224,15 +224,15 @@ Next.js (app + pages router), TanStack Router, FastAPI `APIRouter` prefix compos
 
 ## Status
 
-v0.2.2. Verified against 6 real open-source repositories (`npm run bench`).
-278 tests, including a packaged smoke test that installs the built CLI and runs the
+v0.2.3. Verified against 6 real open-source repositories (`npm run bench`).
+304 tests, including a packaged smoke test that installs the built CLI and runs the
 whole flow — setup, daemon, web view, lock, block.
 
 ## Development
 
 ```bash
 npm install
-npm test          # 7 suites, 278 tests
+npm test          # 7 suites, 304 tests
 npm start         # run the daemon
 ```
 

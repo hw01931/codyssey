@@ -216,15 +216,15 @@ Next.js 파일 기반 라우트(app + pages), TanStack Router, FastAPI `APIRoute
 
 ## 상태
 
-v0.2.2. 실제 오픈소스 6개로 검증합니다 (`npm run bench`).
-테스트 278개. 빌드된 배포본을 설치해서 설정→데몬→웹 화면→잠금→차단까지
+v0.2.3. 실제 오픈소스 6개로 검증합니다 (`npm run bench`).
+테스트 304개. 빌드된 배포본을 설치해서 설정→데몬→웹 화면→잠금→차단까지
 한 바퀴 도는 검증이 포함돼 있습니다.
 
 ## 개발
 
 ```bash
 npm install
-npm test          # 7개 스위트 278개
+npm test          # 7개 스위트 304개
 npm start         # 데몬 실행
 ```
 
