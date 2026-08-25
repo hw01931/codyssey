@@ -28,6 +28,12 @@ const c = {
   r: (s: string) => `\x1b[31m${s}\x1b[0m`,
   d: (s: string) => `\x1b[2m${s}\x1b[0m`,
 }
+function eq(label: string, got: unknown, want: unknown) {
+  const g = JSON.stringify(got)
+  const w = JSON.stringify(want)
+  if (g === w) { pass++; console.log(`  ${c.g('ok')}   ${label}`) }
+  else { fail++; console.log(`  ${c.r('FAIL')} ${label}${NL}         받음: ${g}${NL}         기대: ${w}`) }
+}
 function ok(label: string, cond: boolean, detail = '') {
   if (cond) { pass++; console.log(`  ${c.g('ok')}   ${label}${detail ? c.d('  ' + detail) : ''}`) }
   else { fail++; console.log(`  ${c.r('FAIL')} ${label} ${detail}`) }
@@ -158,6 +164,30 @@ console.log(`${NL}[영어로 부르면 CLI 출력에 한글이 없다]`)
     const bad = text.split(NL).filter(l => HANGUL.test(l))
     ok(`codyssey ${argv.join(' ')}`, bad.length === 0, bad.slice(0, 2).join(' | ').slice(0, 160))
   }
+}
+
+console.log(`${NL}[웹 화면이 쓸 말을 데몬이 내려준다]`)
+// 화면은 정적 HTML 이라 빌드 단계가 없다. 카탈로그를 HTML 안에 또 두면
+// 두 벌이 되어 조용히 어긋난다. 데몬이 지금 말에 맞는 문자열만 내려준다.
+{
+  const HANGUL = /[가-힣]/
+  const stateNow = () => fetch(`${BASE}/api/state`, { signal: AbortSignal.timeout(5000) }).then(r => r.json() as Promise<any>)
+
+  // 지금 말이 무엇이냐에 따라 검사가 달라지면 안 된다. 양쪽 다 못 박는다.
+  cli(['init', '--no-open', '--lang', 'en'])
+  await new Promise(r => setTimeout(r, 900))
+  const enState = await stateNow()
+  ok('상태에 쓰는 말이 들어 있다', enState.lang === 'en', String(enState.lang))
+  ok('화면용 문자열을 같이 준다', Object.keys(enState.strings ?? {}).length > 10, `${Object.keys(enState.strings ?? {}).length}개`)
+  ok('전부 ui. 로 시작한다', Object.keys(enState.strings ?? {}).every(k => k.startsWith('ui.')))
+  const dirty = Object.entries(enState.strings ?? {}).filter(([, v]) => HANGUL.test(String(v)))
+  eq('영어일 때 한글이 안 섞인다', dirty.map(([k, v]) => `${k}=${v}`), [])
+
+  cli(['init', '--no-open', '--lang', 'ko'])
+  await new Promise(r => setTimeout(r, 900))
+  const koState = await stateNow()
+  ok('한국어로 바꾸면 같이 바뀐다', koState.lang === 'ko' && HANGUL.test(String(koState.strings?.['ui.files'])), String(koState.strings?.['ui.files']))
+  eq('두 말의 키가 같다', Object.keys(koState.strings ?? {}).sort(), Object.keys(enState.strings ?? {}).sort())
 }
 
 // -------------------------------------------------------------- 정리

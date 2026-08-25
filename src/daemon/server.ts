@@ -15,7 +15,7 @@ import type { ResolveCtx } from '../core/ir.ts'
 import { deltaBrief, promptBrief, sessionBrief, snapshotEdges, type CtxInput } from './context.ts'
 import { brokenContracts, contractsOf, duplicateNames, nameIndex, testsFor } from '../core/contract.ts'
 import { describeFeature, describeFile, describeModule, emptyLabels, loadLabels, saveLabels, unlabeled, type Labels } from '../core/labels.ts'
-import { t, setLang, resolveLang } from '../i18n/index.ts'
+import { t, setLang, resolveLang, getLang, uiStrings } from '../i18n/index.ts'
 
 /**
  * 웹 화면이 있는 곳.
@@ -461,6 +461,10 @@ export class Daemon {
     const locked = this.lockedFiles()
     return {
       repoRoot: this.repoRoot,
+      // 화면은 정적 HTML 이라 빌드 단계가 없다. 카탈로그를 거기 또 두면 두 벌이
+      // 되어 조용히 어긋난다. 지금 말에 맞는 것만 내려주고 화면은 받아 쓴다.
+      lang: getLang(),
+      strings: uiStrings(),
       counts: {
         files: this.graph.nodes.size,
         edges: this.graph.edges.length,

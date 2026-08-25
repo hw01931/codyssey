@@ -149,3 +149,20 @@ export function josa(word: string, pair: '은는' | '이가' | '을를' | '과�
   if (pair === '으로로' && jong === 8) return without // 'ㄹ' 받침 ('서울로')
   return jong === 0 ? without : withBatchim
 }
+
+/**
+ * 웹 화면이 쓸 문자열만 추려서 준다.
+ *
+ * 화면은 정적 HTML 이라 빌드 단계가 없다. 카탈로그를 HTML 안에 또 두면
+ * 두 벌이 되어 조용히 어긋난다. 데몬이 지금 말에 맞는 것만 내려주고
+ * 화면은 그걸 받아 쓴다. 출처가 하나다.
+ */
+export function uiStrings(): Record<string, string> {
+  const table = CATALOGS[current] as Record<string, string>
+  const fallback = en as Record<string, string>
+  const out: Record<string, string> = {}
+  for (const k of Object.keys(fallback)) {
+    if (k.startsWith('ui.')) out[k] = table[k] ?? fallback[k]
+  }
+  return out
+}
