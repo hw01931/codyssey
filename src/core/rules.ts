@@ -1,6 +1,7 @@
 import type { Graph } from './graph.ts'
 import { allFilesOf, autolockCandidates, exclusiveOf, featuresOf, type Features } from './features.ts'
 import { consumerModules, type Modules } from './modules.ts'
+import { t, setLang, type Lang } from '../i18n/index.ts'
 
 export interface ProtectRule {
   path: string
@@ -26,6 +27,8 @@ export interface FeatureRule {
 
 export interface Rules {
   version: number
+  /** codyssey 가 쓰는 말. 없으면 환경에서 추측한다. */
+  lang?: Lang
   protect: ProtectRule[]
   features: FeatureRule[]
   layers: LayerRule[]
@@ -108,7 +111,7 @@ export function checkEdit(
     return {
       action: 'block',
       rule: `protect: ${p.path}`,
-      reason: `${say.file(file)} 은(는) 보호된 파일입니다. ${p.reason ?? ''}`.trim(),
+      reason: `${t('rule.protected', { name: say.file(file), reason: p.reason ?? '' })}`.trim(),
       hint: nextStep(graph, features, file, say),
     }
   }
@@ -121,10 +124,10 @@ export function checkEdit(
     return {
       action: 'block',
       rule: `feature: ${fr.id} (${scope})`,
-      reason: `${say.feature(fr.id)} 은(는) 잠겨 있습니다. ${fr.reason ?? ''}`.trim(),
+      reason: `${t('rule.featureLocked', { name: say.feature(fr.id), reason: fr.reason ?? '' })}`.trim(),
       hint:
         scope === 'exclusive'
-          ? `이 파일은 '${fr.id}' 전용입니다. 다른 기능 파일은 자유롭게 고칠 수 있습니다.`
+          ? t('rule.featureExclusive', { id: fr.id })
           : undefined,
     }
   }
@@ -142,8 +145,8 @@ export function checkEdit(
         return {
           action: 'block',
           rule: `layers: ${l.deny}`,
-          reason: l.reason ?? `${arrow.from} 에서 ${arrow.to} 를 import 할 수 없습니다.`,
-          hint: `'${spec}' import 를 제거하거나, 상위 계층에서 값을 내려받으세요.`,
+          reason: l.reason ?? t('rule.layerDenied', { from: arrow.from, to: arrow.to }),
+          hint: t('rule.layerHint', { spec }),
         }
       }
     }
@@ -158,8 +161,7 @@ export function checkEdit(
         action: rules.autolock.mode,
         rule: `autolock: >=${rules.autolock.minFeatures} features`,
         reason:
-          `이 파일을 고치면 ${feats.map(f => say.feature(f)).join(', ')} ` +
-          `${feats.length}곳이 같이 바뀝니다. 계속할까요?`,
+          t('rule.sharedFeatures', { list: feats.map(f => say.feature(f)).join(', '), count: feats.length }),
         hint: nextStep(graph, features, file, say),
       }
     }
@@ -174,8 +176,10 @@ export function checkEdit(
           action: rules.autolock.mode,
           rule: `autolock: >=${min} modules`,
           reason:
-            `이 파일은 ${ms.slice(0, 3).map(m => say.module(m)).join(', ')}` +
-            `${ms.length > 3 ? ` 외 ${ms.length - 3}곳` : ''}에서 함께 씁니다. 계속할까요?`,
+            t('rule.sharedModules', {
+              list: ms.slice(0, 3).map(m => say.module(m)).join(', '),
+              more: ms.length > 3 ? t('rule.sharedModulesMore', { count: ms.length - 3 }) : '',
+            }),
           hint: nextStep(graph, features, file, say),
         }
       }
@@ -194,7 +198,7 @@ export function findViolations(rules: Rules, graph: Graph) {
       const arrow = splitArrow(l.deny)
       if (!arrow) continue
       if (matches(arrow.from, e.from) && matches(arrow.to, e.to)) {
-        out.push({ from: e.from, to: e.to, rule: l.deny, reason: l.reason ?? '레이어 위반' })
+        out.push({ from: e.from, to: e.to, rule: l.deny, reason: l.reason ?? t('rule.layerViolation') })
       }
     }
   }
@@ -206,7 +210,7 @@ export function suggestRules(features: Features, minFeatures = 3): Rules {
   const r = defaultRules()
   r.protect = autolockCandidates(features, minFeatures).map(c => ({
     path: c.file,
-    reason: `기능 ${c.features.length}개가 공유: ${c.features.join(', ')}`,
+    reason: t('rule.sharedBy', { count: c.features.length, list: c.features.join(', ') }),
   }))
   return r
 }
@@ -221,7 +225,7 @@ const IS_BARREL = /(^|\/)(__init__\.py|index\.(ts|tsx|js|jsx))$/
  * 무엇을 할 수 있는지 항상 같이 말한다.
  */
 function nextStep(graph: Graph, features: Features, file: string, say: Say): string {
-  const lines = [`그래도 바꾸려면 "codyssey 에서 ${say.file(file)} 잠금 풀어줘" 라고 말하세요.`]
+  const lines = [t('rule.unlockHint', { name: say.file(file) })]
   const alt = extensionHint(graph, features, file)
   if (alt) lines.push(alt)
   return lines.join('\n')
@@ -245,7 +249,7 @@ function extensionHint(graph: Graph, features: Features, file: string): string |
     .map(n => n.id)
     .sort()
   if (!free.length) return undefined
-  return `대신 고칠 수 있는 이웃 파일: ${free.slice(0, 3).join(', ')}`
+  return t('rule.freeNeighbours', { list: free.slice(0, 3).join(', ') })
 }
 
 /** 새로 추가된 텍스트에서 import spec 을 뽑는다. 정규식으로 충분하다 - 확신 없으면 안 막으니까. */

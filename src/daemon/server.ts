@@ -15,6 +15,7 @@ import type { ResolveCtx } from '../core/ir.ts'
 import { deltaBrief, promptBrief, sessionBrief, snapshotEdges, type CtxInput } from './context.ts'
 import { brokenContracts, contractsOf, duplicateNames, nameIndex, testsFor } from '../core/contract.ts'
 import { describeFeature, describeFile, describeModule, emptyLabels, loadLabels, saveLabels, unlabeled, type Labels } from '../core/labels.ts'
+import { setLang, resolveLang } from '../i18n/index.ts'
 
 const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui')
 
@@ -205,6 +206,9 @@ export class Daemon {
       // 기본값으로 되돌리면 읽지도 못한 설정을 근거로 질문하기 시작한다.
       this.rules = inertRules()
     }
+    // 룰을 읽을 때마다 말도 다시 정한다. 사람이 rules.yaml 의 lang 을 고치면
+    // 데몬을 다시 안 켜도 다음 메시지부터 바뀐다.
+    setLang(this.rules.lang ?? resolveLang(this.repoRoot))
   }
 
   saveRules() {

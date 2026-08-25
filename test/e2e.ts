@@ -8,6 +8,11 @@ import path from 'node:path'
 import { Daemon } from '../src/daemon/server.ts'
 import { projectPort, samePath } from '../src/setup/port.ts'
 import { init } from '../src/setup/init.ts'
+import { setLang } from '../src/i18n/index.ts'
+
+// 이 테스트는 한국어 문장을 직접 확인한다. 기본값은 영어이므로 명시한다.
+// 말에 따라 결과가 달라지는 것 자체가 검사 대상이 아니다.
+setLang('ko')
 
 const PORT = 7788
 const BASE = `http://127.0.0.1:${PORT}`

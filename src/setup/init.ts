@@ -6,6 +6,8 @@ import { scan } from '../index/scan.ts'
 import { computeFeatures, autolockCandidates } from '../core/features.ts'
 import { defaultRules } from '../core/rules.ts'
 import { resolvePort, savePort } from './port.ts'
+import { resolveLang, setLang, getLang, type Lang } from '../i18n/index.ts'
+import { rulesHeader, gitHookHeader } from '../i18n/template.ts'
 
 export interface InitResult {
   repoRoot: string
@@ -23,8 +25,11 @@ export interface InitResult {
  */
 export const HOOK_MATCHER = 'Edit|Write|NotebookEdit|Bash'
 
-export async function init(repoRoot: string, requestedPort?: number): Promise<InitResult> {
+export async function init(repoRoot: string, requestedPort?: number, requestedLang?: string): Promise<InitResult> {
   const root = path.resolve(repoRoot)
+  // 쓸 말을 가장 먼저 정한다. 이 아래 모든 안내문이 여기에 따른다.
+  const lang = resolveLang(root, requestedLang)
+  setLang(lang)
   const wrote: string[] = []
   const skipped: string[] = []
 
@@ -42,7 +47,7 @@ export async function init(repoRoot: string, requestedPort?: number): Promise<In
   if (fs.existsSync(rulesPath)) {
     skipped.push(rel(root, rulesPath) + ' (이미 있음)')
   } else {
-    fs.writeFileSync(rulesPath, renderRules())
+    fs.writeFileSync(rulesPath, renderRules(lang))
     wrote.push(rel(root, rulesPath))
   }
 
@@ -75,25 +80,9 @@ export async function init(repoRoot: string, requestedPort?: number): Promise<In
   }
 }
 
-function renderRules(): string {
-  const r = defaultRules()
-  return (
-    `# CODYSSEY 규칙\n` +
-    `#\n` +
-    `# protect  여기 적힌 파일은 AI 가 못 고칩니다. (웹 화면에서 클릭으로 추가하는 걸 권장)\n` +
-    `# layers   특정 폴더에서 특정 파일을 import 하지 못하게 막습니다.\n` +
-    `# autolock 여러 기능이 함께 쓰는 파일을 고치려 할 때 확인을 요청합니다.\n` +
-    `#            mode: off(끔) | ask(물어봄) | block(막음)\n` +
-    `#\n` +
-    `# 예시:\n` +
-    `# protect:\n` +
-    `#   - path: api/services/payment.py\n` +
-    `#     reason: 결제 코어. 바꾸려면 사람 승인 필요\n` +
-    `# layers:\n` +
-    `#   - deny: web/components/** -> web/lib/api.ts\n` +
-    `#     reason: 데이터 가져오기는 페이지에서만\n\n` +
-    YAML.stringify(r)
-  )
+function renderRules(lang: Lang): string {
+  // lang 을 파일에 적어둔다. 그래야 다음부터 환경과 무관하게 같은 말로 나온다.
+  return rulesHeader(lang) + YAML.stringify({ lang, ...defaultRules() })
 }
 
 /** 기존 settings.json 을 건드리지 않고 우리 훅만 끼워 넣는다. */
@@ -279,8 +268,7 @@ function installGitHook(root: string): 'wrote' | string | null {
   const cmd = [quoted(command), ...args.map(quoted)].join(' ')
   const script = [
     '#!/bin/sh',
-    '# codyssey - 커밋할 때 구조도를 최신으로 유지합니다.',
-    '# 이 훅이 싫으면 이 파일을 지우세요. 실패해도 커밋은 막지 않습니다.',
+    ...gitHookHeader(getLang()),
     `${cmd} >/dev/null 2>&1 || exit 0`,
     'git add .codyssey/ARCHITECTURE.md 2>/dev/null || true',
     '',

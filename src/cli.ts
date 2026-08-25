@@ -12,6 +12,7 @@ import { runMcp } from './mcp/server.ts'
 import { archDiff, renderDiff, shouldFail } from './setup/archdiff.ts'
 import { architectureMd, terminalMap, type ReportInput } from './render/report.ts'
 import { Daemon as _D } from './daemon/server.ts'
+import { setLang, resolveLang } from './i18n/index.ts'
 
 const [, , cmd = 'help', ...rest] = process.argv
 
@@ -24,6 +25,11 @@ const positional = rest.filter((a, i) => !a.startsWith('--') && !rest[i - 1]?.st
 
 const root = flag('root', '.')
 const explicitPort = rest.includes('--port') ? Number(flag('port', '')) : undefined
+const explicitLang = rest.includes('--lang') ? flag('lang', '') : undefined
+
+// 명령을 실행하기 전에 쓸 말부터 정한다. 도움말과 에러도 이 말로 나와야 한다.
+// init 은 스스로 다시 정한다 (아직 rules.yaml 이 없을 수 있으므로).
+setLang(resolveLang(path.resolve(root), explicitLang))
 
 const C = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
@@ -67,13 +73,14 @@ ${C.b('CODYSSEY')} ${C.dim('- AI 가 구조를 깨뜨리지 않게 지켜주는 
   ${C.dim('--root <경로>')}   대상 폴더 (기본: 현재 폴더)
   ${C.dim('--port <번호>')}   포트 지정 (기본: 프로젝트별로 자동 배정)
   ${C.dim('--no-open')}      브라우저 자동 실행 안 함
+  ${C.dim('--lang <en|ko>')} 쓸 말 (기본: 시스템 설정)
   ${C.dim('--foreground')}   init 이 데몬을 물고 있게 (기본은 백그라운드)
 `)
 }
 
 async function cmdInit() {
   console.log(`\n${C.b('CODYSSEY 설정 중...')}\n`)
-  const r = await init(root, explicitPort)
+  const r = await init(root, explicitPort, explicitLang)
 
   console.log(`  코드 ${C.b(String(r.files))}개 파일을 읽었습니다`)
   console.log(`  기능 ${C.b(String(r.features))}개를 찾았습니다`)

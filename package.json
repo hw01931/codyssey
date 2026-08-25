@@ -11,7 +11,7 @@
     "start": "node --experimental-strip-types src/cli.ts start",
     "scan": "node --experimental-strip-types src/cli.ts scan",
     "status": "node --experimental-strip-types src/cli.ts status",
-    "test": "node --experimental-strip-types test/run.ts && node --experimental-strip-types test/e2e.ts && node --experimental-strip-types test/contract.ts && node --experimental-strip-types test/symbols.ts && node --experimental-strip-types test/regress.ts",
+    "test": "node --experimental-strip-types test/i18n.ts && node --experimental-strip-types test/run.ts && node --experimental-strip-types test/e2e.ts && node --experimental-strip-types test/contract.ts && node --experimental-strip-types test/symbols.ts && node --experimental-strip-types test/regress.ts",
     "build": "node build.mjs",
     "bench": "node --experimental-strip-types bench/run.ts",
     "prepack": "node build.mjs"
