@@ -17,7 +17,24 @@ import { brokenContracts, contractsOf, duplicateNames, nameIndex, testsFor } fro
 import { describeFeature, describeFile, describeModule, emptyLabels, loadLabels, saveLabels, unlabeled, type Labels } from '../core/labels.ts'
 import { setLang, resolveLang } from '../i18n/index.ts'
 
-const UI_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui')
+/**
+ * 웹 화면이 있는 곳.
+ *
+ * 개발 중에는 `src/daemon/server.ts` 옆의 `src/ui`, 번들된 배포본에서는
+ * `dist/cli.js` 옆의 `dist/ui` 다. 한쪽만 계산하면 다른 쪽에서 404 가 난다.
+ * 실제로 그랬다 — 배포본의 웹 화면이 안 떴다. init 이 알려주는 주소인데도.
+ *
+ * 추측하지 말고 실제로 있는 곳을 고른다. 없으면 첫 후보를 쓴다(에러 메시지가
+ * 개발자 기준으로 나오도록).
+ */
+const UI_DIR = (() => {
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  const candidates = [
+    path.join(here, '..', 'ui'), // src/daemon -> src/ui
+    path.join(here, 'ui'), // dist -> dist/ui
+  ]
+  return candidates.find(d => fs.existsSync(path.join(d, 'index.html'))) ?? candidates[0]
+})()
 
 /** 바뀌면 다시 읽어야 하는 설정 파일들 */
 const CONFIG_FILES = ['.codyssey/rules.yaml', '.codyssey/labels.yaml']

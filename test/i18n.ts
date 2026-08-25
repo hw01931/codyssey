@@ -8,6 +8,7 @@
 import { en } from '../src/i18n/en.ts'
 import { ko } from '../src/i18n/ko.ts'
 import { t, setLang, josa, resolveLang, langFromEnv, LANGS, isLang } from '../src/i18n/index.ts'
+import { describeFeature, describeModule, describeFile, emptyLabels } from '../src/core/labels.ts'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -88,6 +89,31 @@ eq('CODYSSEY_LANG 이 가장 세다', langFromEnv({ CODYSSEY_LANG: 'en', LANG: '
   fs.writeFileSync(path.join(tmp, '.codyssey', 'rules.yaml'), `version: 1${NL}protect: []${NL}`)
   ok('lang 이 없으면 환경을 본다', ['en', 'ko'].includes(resolveLang(tmp)))
   fs.rmSync(tmp, { recursive: true, force: true })
+}
+
+console.log(`${NL}[영어 모드에서는 한글이 한 글자도 안 나온다]`)
+// 레이블은 메시지와 성격이 다르다. 코드에서 뽑아낸 이름이라 카탈로그로 못 옮긴다.
+// 한국어 사전이 존재하는 이유가 "코드는 영어인데 읽는 사람은 한국인" 이므로,
+// 영어 사용자에게는 경로 조각이 곧 이름이다. 사전을 타면 안 된다.
+// 하나하나 문구를 못 박는 대신 이 불변식 하나로 전부 잡는다.
+{
+  const HANGUL = /[가-힣]/
+  const L = emptyLabels()
+  setLang('en')
+  const cases: Array<[string, string]> = []
+  for (const id of ['PAGE /checkout', 'PAGE /', 'ENTRY src/main.ts', 'GET /api/orders', 'POST /login'])
+    cases.push([`기능 ${id}`, describeFeature(id, L)])
+  for (const m of ['api/services', 'web/components', '(루트)', 'src'])
+    cases.push([`모듈 ${m}`, describeModule(m, L)])
+  for (const f of ['api/routes/admin.py', 'App.jsx', 'web/lib/money.ts', 'server.py'])
+    cases.push([`파일 ${f}`, describeFile(f, L)])
+  const dirty = cases.filter(([, out]) => HANGUL.test(out))
+  for (const [what, out] of cases.slice(0, 3)) ok(`${what} -> ${out}`, !HANGUL.test(out))
+  eq('한글이 새는 곳이 없다', dirty.map(([w, o]) => `${w} -> ${o}`), [])
+  ok('그래도 빈 문자열은 아니다', cases.every(([, o]) => o.trim().length > 0))
+
+  setLang('ko')
+  ok('한국어 모드에서는 사전이 살아 있다', cases.some(([, ]) => true) && HANGUL.test(describeFeature('PAGE /checkout', L)), describeFeature('PAGE /checkout', L))
 }
 
 console.log(`${NL}${fail === 0 ? c.g('통과') : c.r('실패')}  ${pass}개 성공, ${fail}개 실패${NL}`)

@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import YAML from 'yaml'
+import { t, getLang } from '../i18n/index.ts'
 
 /**
  * 사람이 읽는 이름.
@@ -94,9 +95,25 @@ const WORDS: Record<string, string> = {
   me: '내', new: '새로 만들기', edit: '수정', detail: '상세', list: '목록',
 }
 
-/** 경로 조각 하나를 사람 말로. 못 바꾸면 원문 그대로. */
+/**
+ * 영어권에서 통째로 대문자로 읽는 조각. 'api' 를 'Api' 라고 쓰면 어색하다.
+ */
+const ACRONYMS = new Set(['api', 'db', 'ui', 'ux', 'url', 'id', 'io', 'css', 'html', 'js', 'ts', 'sql', 'jwt'])
+
+/**
+ * 경로 조각 하나를 사람 말로. 못 바꾸면 원문 그대로.
+ *
+ * 영어일 때는 사전을 타지 않는다. 사전이 있는 이유가 "코드는 영어인데 읽는
+ * 사람은 한국인" 이라서다. 영어 사용자에게는 경로 조각이 이미 그 사람 말이고,
+ * 'checkout' 을 다른 영어 단어로 바꾸면 오히려 코드와 멀어진다.
+ * 첫 글자만 올린다.
+ */
 function word(seg: string): string {
   const key = seg.toLowerCase().replace(/[-_]/g, '')
+  if (getLang() !== 'ko') {
+    if (ACRONYMS.has(key)) return key.toUpperCase()
+    return seg.charAt(0).toUpperCase() + seg.slice(1)
+  }
   return WORDS[key] ?? WORDS[key.replace(/s$/, '')] ?? seg
 }
 
@@ -115,21 +132,29 @@ export function describeFeature(id: string, labels: Labels): string {
 
   if (kind === 'PAGE') {
     const segs = raw.split('/').filter(Boolean).filter(s => !/^[:{[]/.test(s))
-    if (!segs.length) return '첫 화면'
-    return segs.map(word).join(' ') + ' 화면'
+    if (!segs.length) return t('label.home')
+    return t('label.page', { name: segs.map(word).join(' ') })
   }
   if (kind === 'ENTRY') {
     const base = raw.split('/').pop()?.replace(/\.\w+$/, '') ?? raw
-    return `${word(base)} 시작점`
+    return t('label.entry', { name: word(base) })
   }
   // GET / POST 같은 HTTP 라우트
   const segs = raw
     .split('/')
     .filter(Boolean)
     .filter(s => !/^[:{[]/.test(s) && !/^v\d+$/.test(s) && s.toLowerCase() !== 'api')
-  const verb = kind === 'GET' ? '조회' : kind === 'POST' ? '생성' : kind === 'DELETE' ? '삭제' : '변경'
-  if (!segs.length) return `${verb} API`
-  return `${segs.map(word).join(' ')} ${verb} API`
+  const verb = t(
+    kind === 'GET'
+      ? 'label.verb.get'
+      : kind === 'POST'
+        ? 'label.verb.post'
+        : kind === 'DELETE'
+          ? 'label.verb.delete'
+          : 'label.verb.other',
+  )
+  if (!segs.length) return t('label.apiOnly', { verb })
+  return t('label.api', { name: segs.map(word).join(' '), verb })
 }
 
 /** 모듈 이름을 사람 말로.  'api/services' -> '서버 처리 로직' */
@@ -137,7 +162,7 @@ export function describeModule(name: string, labels: Labels): string {
   const custom = labels.modules[name]
   if (custom) return custom
   const segs = name.split('/').filter(s => s && s !== '(루트)')
-  if (!segs.length) return '최상위'
+  if (!segs.length) return t('label.root')
   return segs.map(word).join(' ')
 }
 

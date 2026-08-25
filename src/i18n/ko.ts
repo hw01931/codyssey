@@ -69,6 +69,18 @@ export const ko: Record<keyof typeof en, string> = {
   'brief.noLocks': '아직 잠근 것이 없습니다.',
   'brief.hint': '어떤 파일이 무엇에 영향을 주는지 모르겠으면 고치기 전에 codyssey 에게 물어보세요.',
 
+  // ---- 레이블 (경로에서 뽑은 이름에 붙는 말) ----
+  'label.home': '첫 화면',
+  'label.page': '{name} 화면',
+  'label.entry': '{name} 시작점',
+  'label.api': '{name} {verb} API',
+  'label.apiOnly': '{verb} API',
+  'label.verb.get': '조회',
+  'label.verb.post': '생성',
+  'label.verb.delete': '삭제',
+  'label.verb.other': '변경',
+  'label.root': '최상위',
+
   // ---- 일반 ----
   'common.and': '외',
   'common.none': '없음',

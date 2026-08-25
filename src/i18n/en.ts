@@ -67,6 +67,18 @@ export const en = {
   'brief.noLocks': 'Nothing is locked yet.',
   'brief.hint': 'Ask codyssey before you edit if you are unsure what a file affects.',
 
+  // ---- 레이블 (경로에서 뽑은 이름에 붙는 말) ----
+  'label.home': 'Home',
+  'label.page': '{name} page',
+  'label.entry': '{name} entrypoint',
+  'label.api': '{name} {verb} API',
+  'label.apiOnly': '{verb} API',
+  'label.verb.get': 'read',
+  'label.verb.post': 'create',
+  'label.verb.delete': 'delete',
+  'label.verb.other': 'change',
+  'label.root': 'Top level',
+
   // ---- 일반 ----
   'common.and': 'and',
   'common.none': 'none',

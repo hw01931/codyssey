@@ -45,7 +45,11 @@ export async function init(repoRoot: string, requestedPort?: number, requestedLa
   const rulesPath = path.join(root, '.codyssey', 'rules.yaml')
   fs.mkdirSync(path.dirname(rulesPath), { recursive: true })
   if (fs.existsSync(rulesPath)) {
-    skipped.push(rel(root, rulesPath) + ' (이미 있음)')
+    // 사람이 쓴 규칙은 덮지 않는다. 하지만 --lang 을 명시했는데 그것까지
+    // 조용히 무시하면, 시킨 대로 안 됐는데 아무 말도 안 하는 셈이다.
+    const changed = requestedLang ? setRulesLang(rulesPath, lang) : false
+    if (changed) wrote.push(`${rel(root, rulesPath)} (lang: ${lang})`)
+    else skipped.push(rel(root, rulesPath) + ' (이미 있음)')
   } else {
     fs.writeFileSync(rulesPath, renderRules(lang))
     wrote.push(rel(root, rulesPath))
@@ -78,6 +82,38 @@ export async function init(repoRoot: string, requestedPort?: number, requestedLa
     wrote,
     skipped,
   }
+}
+
+/**
+ * 이미 있는 rules.yaml 의 `lang` 만 바꾼다.
+ *
+ * 파일 전체를 다시 쓰면 사람이 적어둔 규칙과 주석이 날아간다. 한 줄만 손댄다.
+ * YAML 로 파싱해서 다시 쓰지 않는 것도 같은 이유다 — 주석이 사라진다.
+ * 이미 같은 값이면 아무것도 안 하고 false 를 준다.
+ */
+function setRulesLang(rulesPath: string, lang: Lang): boolean {
+  let text: string
+  try {
+    text = fs.readFileSync(rulesPath, 'utf8')
+  } catch {
+    return false
+  }
+  const line = /^lang:\s*["']?([A-Za-z_-]+)["']?\s*$/m
+  const found = line.exec(text)
+  if (found) {
+    if (found[1] === lang) return false
+    fs.writeFileSync(rulesPath, text.replace(line, `lang: ${lang}`))
+    return true
+  }
+  // lang 줄이 아예 없던 파일(예전 버전이 만든 것). 첫 설정 줄 앞에 끼워 넣는다.
+  const CR = String.fromCharCode(13)
+  const LF = String.fromCharCode(10)
+  const nl = text.includes(CR + LF) ? CR + LF : LF
+  const lines = text.split(LF).map(l => (l.endsWith(CR) ? l.slice(0, -1) : l))
+  const at = lines.findIndex(l => l.trim() && !l.trimStart().startsWith('#'))
+  lines.splice(at < 0 ? lines.length : at, 0, `lang: ${lang}`)
+  fs.writeFileSync(rulesPath, lines.join(nl))
+  return true
 }
 
 function renderRules(lang: Lang): string {
