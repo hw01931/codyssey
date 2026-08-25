@@ -34,7 +34,7 @@ export const ko: Record<keyof typeof en, string> = {
   'init.readFiles': '코드 {count}개 파일을 읽었습니다',
   'init.foundFeatures': '기능 {count}개를 찾았습니다',
   'init.wrote': '만든 파일',
-  'init.done': '설정 완료. 이 프로젝트는 포트 {port} 를 씁니다.',
+  'init.done': '이 프로젝트는 포트 {port} 를 씁니다.',
   'init.restart': '중요: 차단이 켜지려면 Claude Code 를 다시 시작해야 합니다.',
   'init.restartWhy': '훅 설정은 세션이 시작될 때 읽힙니다. 지금 세션에는 적용되지 않습니다.',
   'init.restartThen': '다시 시작한 뒤부터는 데몬도 자동으로 켜집니다.',

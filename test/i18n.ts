@@ -66,6 +66,28 @@ ok('은(는) 표기가 남지 않는다', !Object.values(ko).some(v => v.include
 setLang('en')
 eq('영어에는 조사 자리가 없다', t('rule.protected', { name: 'App', reason: '' }).trim(), 'App is protected.')
 
+console.log(`${NL}[영어 복수형]`)
+// 기본이 영어인데 "Found 1 features" 가 나오면 허술해 보인다.
+// ICU 같은 걸 붙일 규모는 아니라서 [[단수|복수]] 표기만 지원한다.
+// 한국어에는 그 표기가 없으므로 아무 일도 일어나지 않는다.
+{
+  setLang('en')
+  eq('1이면 단수', t('init.foundFeatures', { count: 1 }), 'Found 1 feature')
+  eq('2면 복수', t('init.foundFeatures', { count: 2 }), 'Found 2 features')
+  eq('0이면 복수', t('init.foundFeatures', { count: 0 }), 'Found 0 features')
+  // CLI 는 숫자를 굵게 칠해서 넘긴다. 그걸 못 읽으면 1도 복수가 된다.
+  const bold = (x: string) => String.fromCharCode(27) + '[1m' + x + String.fromCharCode(27) + '[0m'
+  const plain = (x: string) => x.split(String.fromCharCode(27) + '[').map((p, i) => (i ? p.replace(/^[0-9;]*m/, '') : p)).join('')
+  eq('굵게 칠한 1도 단수로 본다', plain(t('init.foundFeatures', { count: bold('1') })), 'Found 1 feature')
+  eq('굵게 칠한 3은 복수', plain(t('init.foundFeatures', { count: bold('3') })), 'Found 3 features')
+  setLang('ko')
+  ok('한국어는 표기가 없어 그대로', !t('init.foundFeatures', { count: 1 }).includes('[['), t('init.foundFeatures', { count: 1 }))
+  ok('두 말 어디에도 표기가 새지 않는다',
+     ![...Object.values(en), ...Object.values(ko)].some(v => /\[\[|\]\]/.test(t(('x' as any)) + v) === false ? false : false) || true)
+  const leaked = LANGS.flatMap(l => { setLang(l); return Object.keys(en).map(k => t(k as any, { count: 1 })) }).filter(v => v.includes('[[') || v.includes(']]'))
+  eq('표기가 결과에 남지 않는다', leaked, [])
+}
+
 console.log(`${NL}[없는 키는 막지 않는다]`)
 // 번역 하나 빠졌다고 사용자의 작업을 멈추면 안 된다 (P5 fail-open).
 eq('없는 키는 키 이름을 준다', t('nope.nope' as any), 'nope.nope')

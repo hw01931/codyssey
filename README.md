@@ -3,7 +3,7 @@
 > Architecture guardrails for AI coding agents.
 > Tells the agent what will break **before** it edits, and actually blocks edits to protected code.
 
-[한국어 문서는 아래에 있습니다 ↓](#codyssey-한국어)
+[한국어 문서 →](README.ko.md)
 
 ## Why
 
@@ -11,14 +11,54 @@ AI coding agents quietly break things that used to work. Every existing tool onl
 *informs* — the agent can ignore it. CODYSSEY intercepts at the `PreToolUse` hook and
 denies the edit with a reason. That is the only point with real enforcement.
 
+Blocking `Edit` alone is not enough: one `sed -i` walks straight through it. So CODYSSEY
+**reads `Bash` commands too** and works out which files they would write. Redirection,
+heredocs, `sed -i`, `tee`, `cp`/`mv`, `rm` all go through the same rules. Read-only
+commands (`cat`, `grep`, `npm test`) pass untouched.
+
 ## Quick start
+
+**You can just ask your agent.** Tell Claude Code:
+
+> "Install codyssey. Run `npx codyssey init`, and tell me to restart Claude Code when it's done."
+
+Or run it yourself:
 
 ```bash
 npx codyssey init
 ```
 
 That is the whole setup. It reads your code, writes the config, and opens a web view.
-**Restart Claude Code once** — hook settings are read at session start.
+The port is derived from the project folder, so several projects can run at once
+without colliding.
+
+```
+Setting up CODYSSEY...
+
+  Read 19 source files
+  Found 4 features
+  5 files are shared by several features - pick which to lock in the web view
+
+  + .codyssey/rules.yaml
+  + .claude/settings.json
+  + .mcp.json
+  + .git/hooks/pre-commit
+
+Setup complete. This project uses port 7912.
+
+Important: Blocking turns on once you restart Claude Code.
+```
+
+**Restart Claude Code once.** Hook settings are read when a session starts. After that
+the daemon comes up on its own.
+
+Click a file box in the browser and press **protect**. From then on, when the agent
+tries to edit it:
+
+```
+[codyssey] Payment core. Needs a human to approve changes.
+Files nearby you can edit instead: api/services/order.py
+```
 
 ## What it does
 
@@ -32,254 +72,192 @@ That is the whole setup. It reads your code, writes the config, and opens a web 
 - **Zero code changes.** No imports, no decorators. Delete `.codyssey/` and it is gone
 - **Fails open.** If the daemon is down or a rule is unclear, edits pass silently
 
-## Commands
+## Language
+
+CODYSSEY speaks English by default and follows your system locale when that is Korean.
 
 ```bash
-codyssey init            set up and open the web view
-codyssey map             draw the structure in your terminal
-codyssey doctor          check that everything is wired correctly
-codyssey impact <file>   what breaks if I change this
-codyssey diff <ref>      how the architecture changed since <ref>
-codyssey mcp             MCP server (6 tools for agents)
+codyssey init --lang ko      # or en
 ```
 
-## Support
+The choice is written to `.codyssey/rules.yaml` as `lang:`, so it stays the same on
+every machine that opens the project. `--lang` always wins over the file.
 
-TypeScript / JavaScript / Python.
-Next.js (app + pages router), TanStack Router, FastAPI `APIRouter` prefix composition,
-tsconfig path aliases, TypeScript ESM (`./x.js` → `x.ts`).
+## Works on large repositories
 
-## Status
+Drawing a 400-file repository all at once is unreadable. The default view shows
+**what is around the file you care about**.
 
-v0.1.0. Verified against 5 real open-source repositories (`npm run bench`).
-119 tests. **The CLI and web UI currently speak Korean** — English UI is planned.
+- **nearby** — 24 boxes closest to the selected file (or recent activity, locks, suggestions)
+- **this module** — one folder group
+- **everything** — all of it, collapsed into modules
 
----
+It always says how many boxes are hidden. Nothing is quietly dropped.
 
-<a name="codyssey-한국어"></a>
+## Two axes: features and modules
 
-# CODYSSEY
-
-> AI가 코드를 고치기 전에 **뭐가 깨지는지 알려주고**, 건드리면 안 되는 곳은 **실제로 막습니다.**
-
-바이브 코딩을 하다 보면 AI가 잘 돌아가던 부분을 조용히 망가뜨립니다.
-CODYSSEY는 편집이 일어나기 직전에 끼어들어서, 여러 기능이 함께 쓰는 파일이나
-잠가둔 파일을 고치려 하면 이유와 함께 막습니다.
-
-기존 도구들은 전부 *알려주기*만 합니다. AI가 무시하면 그만입니다.
-CODYSSEY는 `PreToolUse` 훅에서 차단합니다. 그게 유일하게 강제력이 있는 지점입니다.
-
-`Edit` 만 막으면 `sed -i` 한 줄로 뚫립니다. 그래서 **`Bash` 명령도 읽어서**
-어떤 파일을 쓰려는지 뽑아냅니다. 리다이렉션, heredoc, `sed -i`, `tee`, `cp`/`mv`, `rm`
-전부 같은 규칙을 거칩니다. 읽기만 하는 명령(`cat`, `grep`, `npm test`)은 그대로 통과합니다.
-
-## 시작하기
-
-**AI 에게 시켜도 됩니다.** Claude Code 에 이렇게 말하세요:
-
-> "codyssey 를 설치해줘. `npx codyssey init` 실행하고, 끝나면 나한테 Claude Code 를 다시 시작하라고 알려줘."
-
-직접 치려면:
-
-```bash
-npx codyssey init
-```
-
-이 한 줄이 전부입니다. 코드를 읽고, 설정을 만들고, 웹 화면을 띄웁니다.
-포트는 프로젝트 폴더에서 계산되므로 여러 프로젝트를 동시에 열어도 서로 안 겹칩니다.
-
-```
-CODYSSEY 설정 중...
-
-  코드 19개 파일을 읽었습니다
-  기능 4개를 찾았습니다
-  여러 기능이 함께 쓰는 파일 5개 - 잠글지 화면에서 골라주세요
-
-  + .codyssey/rules.yaml
-  + .claude/settings.json
-  + .gitignore
-
-설정 완료. 이제 웹 화면을 엽니다.
-```
-
-**설정 직후 Claude Code 를 한 번 다시 시작해야 합니다.** 훅 설정은 세션이
-시작될 때 읽히기 때문입니다. 다시 시작한 뒤로는 데몬도 알아서 켜집니다.
-
-브라우저에서 파일 상자를 클릭하고 **잠그기**를 누르면 끝입니다.
-그다음부터 AI가 그 파일을 고치려 하면 이렇게 막힙니다.
-
-```
-[codyssey] 결제 코어. 사람 승인 필요
-대신 고칠 수 있는 이웃 파일: api/services/order.py
-```
-
-## 큰 프로젝트에서도
-
-400 파일짜리 저장소를 통째로 그리면 아무것도 읽을 수 없습니다.
-그래서 기본 화면은 **지금 관심 있는 파일 주변**만 보여줍니다.
-
-- **주변만** - 고른 파일(없으면 최근 활동/잠긴 파일/잠금 제안)에서 가까운 순으로 24개
-- **이 모듈** - 같은 폴더 묶음만
-- **전체** - 다 보기
-
-몇 개를 숨겼는지 항상 위에 적습니다. 조용히 줄이지 않습니다.
-
-## 기능과 모듈, 두 가지 축
-
-| | 기능 | 모듈 |
+| | Features | Modules |
 |---|---|---|
-| 관점 | 사용자가 쓰는 화면/API | 폴더로 나눈 코드 묶음 |
-| 어떻게 찾나 | 진입점에서 도달 가능한 파일 | 프로젝트 루트 기준 상위 두 단계 |
-| 언제 유용한가 | 웹앱 | 항상 (라이브러리·CLI 포함) |
+| Point of view | screens and APIs people use | code grouped by folder |
+| How they are found | files reachable from an entrypoint | two levels below the project root |
+| When useful | web apps | always (libraries and CLIs too) |
 
-여러 기능이나 여러 모듈이 함께 쓰는 파일이 잠금 후보입니다.
+Files shared by several features, or by several modules, are the lock candidates.
 
-## 파일 잠금만으로는 안 잡히는 것들
+## What file locks cannot catch
 
-파일을 통째로 잠그는 건 무딘 도구입니다. 그 파일을 고치는 건 대부분 정상이고,
-문제는 **그 안의 특정 이름**이거나 **고친 뒤에 뭘 확인해야 하는가**입니다.
+Locking a whole file is a blunt tool. Editing that file is usually fine — the real
+risk is **one particular name inside it**, or **what you must check afterwards**.
 
-**약속(계약) 보호** — 밖에서 이름으로 가져다 쓰는 export 를 없애려 하면 알립니다.
-
-```
-AI: export function formatMoney 를 formatCents 로 바꾸려 함
-→  'formatMoney' 을(를) 없애려 합니다. 3곳이 이 이름을 가져다 씁니다.
-   쓰는 곳: web/app/admin/page.tsx, web/components/OrderTable.tsx, ...
-```
-
-실제 저장소에서 `src/shared/logger.ts` 의 `logger` 는 **83곳**이 가져다 씁니다.
-AI 가 리팩터링하다 이런 걸 지우는 게 가장 흔한 사고인데, 파일 잠금으로는 안 잡힙니다.
-
-**돌려야 할 테스트** — 고친 뒤에 무엇을 확인해야 하는지 알려줍니다.
+**Contract protection** — removing an export other files import by name:
 
 ```
-→  이 파일을 검증하는 테스트: tests/core/packager.test.ts
+Agent: renaming export function formatMoney to formatCents
+->  You are removing 'formatMoney'. 3 places use that name.
+    Used by: web/app/admin/page.tsx, web/components/OrderTable.tsx, ...
 ```
 
-**이미 있는 이름** — 있는 함수를 또 만들려 하면 알립니다.
+In a real repository, `logger` in `src/shared/logger.ts` is imported by **83 files**.
+Deleting something like that during a refactor is the most common accident, and a
+file lock does not catch it.
+
+**Tests to run** — what to check after the edit:
 
 ```
-→  'formatMoney' 은(는) web/lib/money.ts 에 이미 있습니다.
+->  Tests covering this file: tests/core/packager.test.ts
 ```
 
-## AI 에게 세 가지 방식으로 붙습니다
+**Names that already exist** — building a function that is already there:
 
-| 방식 | 언제 | 무엇 |
+```
+->  'formatMoney' already exists in web/lib/money.ts.
+```
+
+## Three ways it reaches the agent
+
+| Way | When | What |
 |---|---|---|
-| **차단** | 편집 직전 | 잠긴 파일이면 이유와 함께 막는다 (1.15ms). `Edit`/`Write` 뿐 아니라 `Bash` 도 본다 |
-| **알림** | 세션 시작 · 프롬프트 · 편집 직후 | 기능 목록, 언급된 파일의 영향 범위, 바뀐 연결 |
-| **조회** | 에이전트가 물어볼 때 | MCP 도구 6개: `get_overview` `impact_of` `find_file` `check_edit` `get_unlabeled` `set_labels` |
+| **Block** | just before an edit | denies a locked file with a reason (1.15ms). Watches `Bash` as well as `Edit`/`Write` |
+| **Inform** | session start · prompt · right after an edit | feature list, impact of mentioned files, links that changed |
+| **Ask** | when the agent asks | 6 MCP tools: `get_overview` `impact_of` `find_file` `check_edit` `get_unlabeled` `set_labels` |
 
-알림은 **할 말이 없으면 아무것도 넣지 않습니다.** 같은 말을 두 번 하지도 않습니다.
-편집마다 수백 토큰씩 붙이면 도움이 아니라 방해입니다.
+Informing adds **nothing when there is nothing to say**, and never repeats itself.
+A few hundred tokens on every edit is noise, not help.
 
-## PR 에서
+## In pull requests
 
 ```bash
 codyssey diff origin/main --markdown
 ```
 
 ```markdown
-## 아키텍처 변화 (`origin/main` 대비)
+## Architecture change (vs `origin/main`)
 
-### 잠긴 파일이 바뀌었습니다
+### Locked files changed
 - `api/services/payment.py`
-사람 승인이 필요한 파일입니다. 의도한 변경인지 확인해 주세요.
+These need a human to approve. Please confirm the change was intended.
 
-### 새 모듈 간 연결
+### New links between modules
 - `web/components -> api/routes (HTTP)`
 ```
 
-`.github/workflows/codyssey.yml` 을 그대로 쓰면 PR 에 코멘트가 달리고,
-잠긴 파일이 바뀌거나 새 규칙 위반이 생기면 CI 가 실패합니다.
+Drop in `.github/workflows/codyssey.yml` and it comments on the PR, failing CI when a
+locked file changes or a new rule violation appears.
 
-파일 단위가 아니라 **모듈 간 연결**로 봅니다. 파일 하나 옮긴 걸로 수백 줄이 나오면
-아무도 안 읽습니다.
+It reports **links between modules**, not individual files. Hundreds of lines because
+someone moved one file is something nobody reads.
 
-## 왜 필요한가
-
-- **언어 경계를 넘는 영향 추적** — 파이썬 서비스 파일 하나가 어느 프론트 화면을 깨뜨리는지 보여줍니다
-- **여러 기능이 공유하는 파일 자동 탐지** — 여기가 깨지면 여러 곳이 한꺼번에 망가집니다
-- **LLM 호출 0회** — 전부 정적 분석입니다. API 키도, 코드 유출도, 요금도 없습니다
-- **코드는 한 줄도 안 바뀝니다** — `.codyssey/` 폴더만 지우면 완전히 원상복구됩니다
-- **막히면 안 될 때는 안 막습니다** — 프로그램이 꺼져 있거나 판단이 안 서면 조용히 통과시킵니다
-
-## 명령어
+## Commands
 
 ```bash
-codyssey init                 처음 한 번. 설정하고 웹 화면 열기
-codyssey start                웹 화면 + 파일 감시 시작
-codyssey doctor               설정이 제대로 됐는지 점검
-codyssey status               터미널에 요약 출력
-codyssey impact <파일>        이 파일을 고치면 뭐가 영향받나
-codyssey diff <기준>          기준 커밋 대비 아키텍처 변화
-codyssey mcp                  MCP 서버 (에이전트가 물어볼 창구)
-codyssey stop                 백그라운드로 켜진 것 끄기
-codyssey scan                 구조 파일만 만들기
+codyssey init            set up and open the web view
+codyssey start           start the web view and file watcher
+codyssey doctor          check that everything is wired correctly
+codyssey status          print a summary in the terminal
+codyssey map             draw the structure in your terminal
+codyssey impact <file>   what breaks if I change this
+codyssey diff <ref>      how the architecture changed since <ref>
+codyssey mcp             MCP server (6 tools for agents)
+codyssey stop            stop what is running in the background
+codyssey scan            write the structure file only
 ```
 
 ```
 $ codyssey impact services/payment.py
 
-영향 기능 2개
+2 features affected
   GET /api/v1/admin/stats
   PAGE /checkout
 
-이 파일을 쓰는 곳 5개
+5 places use this file
   api/main.py
   api/routes/admin.py
   ...
 ```
 
-## 규칙
+## Rules
 
-`.codyssey/rules.yaml` 한 파일입니다. 웹 화면에서 클릭으로 편집되지만 직접 써도 됩니다.
+One file: `.codyssey/rules.yaml`. The web view edits it by clicking, but you can write
+it by hand.
 
 ```yaml
-protect:                                    # AI가 못 고치는 파일
+lang: en                                    # en | ko
+
+protect:                                    # the agent cannot edit these
   - path: api/services/payment.py
-    reason: 결제 코어. 사람 승인 필요
+    reason: Payment core. Needs a human to approve.
 
-layers:                                     # 이 방향 import 금지
+layers:                                     # forbid this direction of import
   - deny: web/components/** -> web/lib/api.ts
-    reason: 데이터 가져오기는 페이지에서만
+    reason: Only pages may fetch data.
 
-autolock:                                   # 여러 기능이 공유하는 파일
+autolock:                                   # files several features share
   minFeatures: 3
   mode: ask                                 # off | ask | block
 ```
 
-## 지원
+## Support
 
 TypeScript / JavaScript / Python.
-Next.js 파일 기반 라우트, FastAPI `APIRouter` prefix 합성(중첩 포함), tsconfig 경로 별칭을 이해합니다.
+Next.js (app + pages router), TanStack Router, FastAPI `APIRouter` prefix composition
+(including nested mounts), tsconfig path aliases, TypeScript ESM (`./x.js` → `x.ts`).
 
-## 개발
+## Status
+
+v0.2.2. Verified against 6 real open-source repositories (`npm run bench`).
+278 tests, including a packaged smoke test that installs the built CLI and runs the
+whole flow — setup, daemon, web view, lock, block.
+
+## Development
 
 ```bash
 npm install
-npm test          # 단위 45개 + 통합 94개
-npm start         # 데몬 실행
+npm test          # 7 suites, 278 tests
+npm start         # run the daemon
 ```
 
-`fixtures/shop`은 잡아야 할 케이스를 전부 심어둔 최소 프로젝트입니다.
-TypeScript 프론트 + Python 백엔드로 되어 있어서 언어 경계 추적까지 실제로 검증합니다.
+`fixtures/shop` is a minimal project with every case worth catching planted in it —
+a TypeScript frontend plus a Python backend, so cross-language tracing is actually
+exercised. `fixtures/vibe` is the opposite: everything crammed into one file, the way
+a lot of vibe-coded projects really look.
 
 ```bash
-npm run bench -- --pull   # 실제 오픈소스 5개에 대고 점수 내기
+npm run bench -- --pull   # score against 6 real open-source repositories
 ```
 
-픽스처 하나만 보고 개발하면 실제 저장소에서 그래프가 통째로 비어도 모릅니다.
-실제로 그랬습니다. 그래서 판단은 벤치 표를 보고 합니다.
+Developing against a single fixture hides real problems — the graph can come out
+completely empty on a real repository and you would never know. That happened. So
+judgement calls are made from the bench table.
 
-## 구조
+## Layout
 
 ```
-src/core/      언어와 무관한 본체 - 그래프, 기능 추출, 규칙
-src/adapters/  언어별 어댑터 (각 200줄 내외)
-src/index/     파서, 스캐너
-src/daemon/    상주 서버 + 훅 응답
-src/ui/        웹 화면 (단일 HTML, 빌드 없음)
+src/core/      language-independent core - graph, feature extraction, rules
+src/adapters/  per-language adapters (~200 lines each)
+src/index/     parser, scanner
+src/daemon/    resident server + hook responses
+src/i18n/      message catalogs (en, ko)
+src/ui/        web view (single HTML file, no build step)
 ```
 
-의존성 5개. LLM 호출 0회.
+5 dependencies. 0 LLM calls.

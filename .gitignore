@@ -15,6 +15,7 @@ fixtures/**/.codyssey/
 # 문서는 README 만 올린다. 계획/결정기록/명세는 로컬 작업물이다.
 *.md
 !README.md
+!README.ko.md
 
 # 스크래치
 *.local.*

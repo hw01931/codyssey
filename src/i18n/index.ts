@@ -102,7 +102,25 @@ export function t(key: Key, vars?: Record<string, string | number>): string {
   const filled = vars
     ? raw.replace(/\{(\w+)\}/g, (whole, name) => (name in vars ? String(vars[name]) : whole))
     : raw
-  return applyJosa(filled)
+  return applyJosa(applyPlural(filled, vars))
+}
+
+/**
+ * 영어 복수형. `[[feature|features]]` 를 `count` 에 맞춰 고른다.
+ *
+ * 기본이 영어인데 "Found 1 features" 가 나오면 허술해 보인다. ICU 를 붙일
+ * 규모는 아니라서 표기 하나만 지원한다. 한국어 카탈로그에는 이 표기가
+ * 아예 없으므로 아무 일도 일어나지 않는다.
+ */
+function applyPlural(s: string, vars?: Record<string, string | number>): string {
+  if (!s.includes('[[')) return s
+  // CLI 는 숫자를 굵게 칠해서 넘긴다. ANSI 코드가 붙은 채로 Number() 하면
+  // NaN 이 되어 1도 복수로 나온다. 실제로 "Found 1 features" 가 나왔다.
+  const ESC = String.fromCharCode(27)
+  const raw = String(vars?.count ?? '').split(ESC + '[').map((p, i) => (i ? p.replace(/^[0-9;]*m/, '') : p)).join('')
+  const n = Number(raw)
+  const one = n === 1
+  return s.replace(/\[\[([^\]|]*)\|([^\]]*)\]\]/g, (_, sing, plur) => (one ? sing : plur))
 }
 
 const JOSA_SLOT = /\{(은는|이가|을를|과와|으로로)\}/g
