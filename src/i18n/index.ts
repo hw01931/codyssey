@@ -27,10 +27,30 @@ export const LANGS = Object.keys(CATALOGS) as Lang[]
 export const isLang = (v: unknown): v is Lang => typeof v === 'string' && (LANGS as string[]).includes(v)
 
 let current: Lang = 'en'
+let pinned = false
 
 export const getLang = (): Lang => current
-export function setLang(lang: Lang | undefined) {
-  if (isLang(lang)) current = lang
+
+/**
+ * 쓸 말을 정한다.
+ *
+ * `explicit` 은 사람이 `--lang` 으로 직접 시킨 경우다. 한 번 그렇게 정하면
+ * 그 뒤의 추측은 무시한다. 안 그러면 CLI 가 `--lang en` 을 받아 영어로 맞춰놓고,
+ * 곧이어 데몬이 rules.yaml 을 읽으면서 다시 한국어로 되돌린다. 실제로 그랬다 —
+ * `codyssey map --lang en` 이 한국어로 나왔다.
+ *
+ * 우선순위는 resolveLang 이 적어둔 그대로여야 한다: 명시 > 파일 > 환경 > 영어.
+ */
+export function setLang(lang: Lang | undefined, explicit = false) {
+  if (!isLang(lang)) return
+  if (pinned && !explicit) return
+  current = lang
+  if (explicit) pinned = true
+}
+
+/** 테스트에서 상태를 되돌리기 위한 것. 제품 코드에서는 쓰지 않는다. */
+export function unpinLang() {
+  pinned = false
 }
 
 /** OS 로케일에서 말을 추측한다. `ko_KR.UTF-8`, `ko-KR`, `ko` 전부 받는다. */

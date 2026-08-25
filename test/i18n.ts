@@ -7,7 +7,7 @@
  */
 import { en } from '../src/i18n/en.ts'
 import { ko } from '../src/i18n/ko.ts'
-import { t, setLang, josa, resolveLang, langFromEnv, LANGS, isLang } from '../src/i18n/index.ts'
+import { t, setLang, getLang, unpinLang, josa, resolveLang, langFromEnv, LANGS, isLang } from '../src/i18n/index.ts'
 import { describeFeature, describeModule, describeFile, emptyLabels } from '../src/core/labels.ts'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -91,6 +91,20 @@ eq('CODYSSEY_LANG 이 가장 세다', langFromEnv({ CODYSSEY_LANG: 'en', LANG: '
   fs.rmSync(tmp, { recursive: true, force: true })
 }
 
+console.log(`${NL}[명시한 말이 나중 추측에 안 밀린다]`)
+// CLI 가 --lang en 으로 맞춰놓으면, 곧이어 데몬이 rules.yaml 을 읽어도
+// 한국어로 되돌리면 안 된다. 실제로 그래서 codyssey map --lang en 이 한국어로 나왔다.
+{
+  setLang('en', true)
+  setLang('ko') // 파일에서 읽은 값 - 명시한 것을 이기면 안 된다
+  eq('명시가 파일을 이긴다', getLang(), 'en')
+  setLang('ko', true)
+  eq('다시 명시하면 바뀐다', getLang(), 'ko')
+  unpinLang()
+  setLang('en')
+  eq('풀면 다시 따라간다', getLang(), 'en')
+}
+
 console.log(`${NL}[영어 모드에서는 한글이 한 글자도 안 나온다]`)
 // 레이블은 메시지와 성격이 다르다. 코드에서 뽑아낸 이름이라 카탈로그로 못 옮긴다.
 // 한국어 사전이 존재하는 이유가 "코드는 영어인데 읽는 사람은 한국인" 이므로,
@@ -103,7 +117,7 @@ console.log(`${NL}[영어 모드에서는 한글이 한 글자도 안 나온다]
   const cases: Array<[string, string]> = []
   for (const id of ['PAGE /checkout', 'PAGE /', 'ENTRY src/main.ts', 'GET /api/orders', 'POST /login'])
     cases.push([`기능 ${id}`, describeFeature(id, L)])
-  for (const m of ['api/services', 'web/components', '(루트)', 'src'])
+  for (const m of ['api/services', 'web/components', '(root)', 'src'])
     cases.push([`모듈 ${m}`, describeModule(m, L)])
   for (const f of ['api/routes/admin.py', 'App.jsx', 'web/lib/money.ts', 'server.py'])
     cases.push([`파일 ${f}`, describeFile(f, L)])

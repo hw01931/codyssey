@@ -6,7 +6,7 @@ import { scan } from '../index/scan.ts'
 import { computeFeatures, autolockCandidates } from '../core/features.ts'
 import { defaultRules } from '../core/rules.ts'
 import { resolvePort, savePort } from './port.ts'
-import { resolveLang, setLang, getLang, type Lang } from '../i18n/index.ts'
+import { resolveLang, setLang, getLang, t, type Lang } from '../i18n/index.ts'
 import { rulesHeader, gitHookHeader } from '../i18n/template.ts'
 
 export interface InitResult {
@@ -29,7 +29,7 @@ export async function init(repoRoot: string, requestedPort?: number, requestedLa
   const root = path.resolve(repoRoot)
   // 쓸 말을 가장 먼저 정한다. 이 아래 모든 안내문이 여기에 따른다.
   const lang = resolveLang(root, requestedLang)
-  setLang(lang)
+  setLang(lang, Boolean(requestedLang))
   const wrote: string[] = []
   const skipped: string[] = []
 
@@ -49,7 +49,7 @@ export async function init(repoRoot: string, requestedPort?: number, requestedLa
     // 조용히 무시하면, 시킨 대로 안 됐는데 아무 말도 안 하는 셈이다.
     const changed = requestedLang ? setRulesLang(rulesPath, lang) : false
     if (changed) wrote.push(`${rel(root, rulesPath)} (lang: ${lang})`)
-    else skipped.push(rel(root, rulesPath) + ' (이미 있음)')
+    else skipped.push(rel(root, rulesPath) + ' ' + t('init.already'))
   } else {
     fs.writeFileSync(rulesPath, renderRules(lang))
     wrote.push(rel(root, rulesPath))
@@ -59,11 +59,11 @@ export async function init(repoRoot: string, requestedPort?: number, requestedLa
   const settingsPath = path.join(root, '.claude', 'settings.json')
   const changed = mergeHooks(settingsPath, port)
   if (changed) wrote.push(rel(root, settingsPath))
-  else skipped.push(rel(root, settingsPath) + ' (이미 설정됨)')
+  else skipped.push(rel(root, settingsPath) + ' ' + t('init.alreadySet'))
 
   // 3) MCP 서버 등록 (에이전트가 구조를 물어볼 창구)
   if (registerMcp(root, port)) wrote.push('.mcp.json')
-  else skipped.push('.mcp.json (이미 있음)')
+  else skipped.push('.mcp.json ' + t('init.already'))
 
   // 4) 커밋할 때 구조도를 자동 갱신하는 git 훅
   const hookMsg = installGitHook(root)
@@ -129,7 +129,7 @@ function mergeHooks(settingsPath: string, port: number): boolean {
       settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
     } catch {
       // 깨진 설정을 덮어쓰지 않는다. 사람이 고쳐야 한다.
-      throw new Error(`${settingsPath} 를 읽을 수 없습니다. JSON 문법을 확인해 주세요.`)
+      throw new Error(t('init.cantReadSettings', { path: settingsPath }))
     }
   }
   settings.hooks ??= {}
@@ -171,7 +171,7 @@ function mergeHooks(settingsPath: string, port: number): boolean {
           command: starterCommand(port),
           async: true,
           timeout: 20,
-          statusMessage: 'codyssey 준비 중...',
+          statusMessage: t('init.preparing'),
         },
       ],
     })
@@ -298,7 +298,7 @@ function installGitHook(root: string): 'wrote' | string | null {
   const p = path.join(dir, 'pre-commit')
   if (fs.existsSync(p)) {
     const cur = fs.readFileSync(p, 'utf8')
-    return cur.includes('codyssey') ? '이미 설정됨' : '이미 다른 훅이 있음'
+    return cur.includes('codyssey') ? t('init.alreadySet') : t('init.otherHook')
   }
   const { command, args } = selfCommand(['scan'])
   const cmd = [quoted(command), ...args.map(quoted)].join(' ')
@@ -319,7 +319,7 @@ function ensureGitignore(root: string): boolean {
   const line = '.codyssey/graph.json'
   const cur = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : ''
   if (cur.split(/\r?\n/).some(l => l.trim() === line)) return false
-  fs.writeFileSync(p, (cur && !cur.endsWith('\n') ? cur + '\n' : cur) + `\n# codyssey (생성물)\n${line}\n`)
+  fs.writeFileSync(p, (cur && !cur.endsWith('\n') ? cur + '\n' : cur) + `\n${t('init.gitignoreNote')}\n${line}\n`)
   return true
 }
 

@@ -2,6 +2,7 @@ import type { Graph } from '../core/graph.ts'
 import { featuresOf, type Features } from '../core/features.ts'
 import { consumerModules, type Modules } from '../core/modules.ts'
 import type { Rules } from '../core/rules.ts'
+import { t } from '../i18n/index.ts'
 
 /**
  * AI 에게 넣어줄 문구를 만든다.
@@ -24,21 +25,21 @@ export function sessionBrief(c: CtxInput): string {
   const L: string[] = []
   const feats = c.features.roots.map(r => r.id)
   if (feats.length) {
-    L.push(`기능 ${feats.length}개: ${feats.slice(0, 8).join(', ')}${feats.length > 8 ? ' 외' : ''}`)
+    L.push(t('ctx.features', { count: feats.length, list: feats.slice(0, 8).join(', ') + (feats.length > 8 ? ' ' + t('ctx.andMore') : '') }))
   }
   if (c.lockedFiles.size) {
     const list = [...c.lockedFiles].sort()
-    L.push(`잠긴 파일 ${list.length}개: ${list.slice(0, 6).join(', ')}${list.length > 6 ? ' 외' : ''}`)
-    L.push('잠긴 파일을 고치려 하면 차단됩니다. 필요하면 사람에게 해제를 요청하세요.')
+    L.push(t('ctx.lockedList', { count: list.length, list: list.slice(0, 6).join(', ') + (list.length > 6 ? ' ' + t('ctx.andMore') : '') }))
+    L.push(t('ctx.lockedNote'))
   }
   if (c.rules.autolock.mode === 'ask') {
-    L.push('여러 기능·모듈이 공유하는 파일은 수정 전 확인을 요청합니다.')
+    L.push(t('ctx.sharedNote'))
   }
   if (!L.length) return ''
   return [
-    '[codyssey] 이 저장소의 구조',
+    t('ctx.title'),
     ...L,
-    `구조를 보려면: http://127.0.0.1:${c.port}`,
+    t('ctx.seeStructure', { url: `http://127.0.0.1:${c.port}` }),
   ].join('\n')
 }
 
@@ -50,16 +51,16 @@ export function promptBrief(c: CtxInput, prompt: string): string {
   const hits = matchFiles(c.graph, prompt).slice(0, 3)
   if (!hits.length) return ''
 
-  const L = ['[codyssey] 언급된 파일']
+  const L = [t('ctx.mentioned')]
   for (const file of hits) {
     const feats = featuresOf(c.features, file)
     const mods = consumerModules(c.graph, c.modules, file)
     const deps = c.graph.dependents(file).size - 1
-    const lockNote = c.lockedFiles.has(file) ? ' [잠김]' : ''
+    const lockNote = c.lockedFiles.has(file) ? ' ' + t('ctx.lockedTag') : ''
     L.push(`${file}${lockNote}`)
-    if (feats.length) L.push(`  영향 기능: ${feats.slice(0, 5).join(', ')}`)
-    else if (mods.length) L.push(`  쓰는 모듈: ${mods.slice(0, 5).join(', ')}`)
-    if (deps > 0) L.push(`  이 파일을 쓰는 곳 ${deps}개`)
+    if (feats.length) L.push('  ' + t('ctx.affects', { list: feats.slice(0, 5).join(', ') }))
+    else if (mods.length) L.push('  ' + t('ctx.usedByModules', { list: mods.slice(0, 5).join(', ') }))
+    if (deps > 0) L.push('  ' + t('ctx.usedBy', { count: deps }))
   }
   return L.join('\n')
 }
@@ -69,7 +70,7 @@ export function deltaBrief(before: EdgeSnapshot, after: EdgeSnapshot, file: stri
   const added = [...after].filter(x => !before.has(x))
   const removed = [...before].filter(x => !after.has(x))
   if (!added.length && !removed.length) return ''
-  const L = [`[codyssey] ${file} 의 연결이 바뀌었습니다`]
+  const L = [t('ctx.linksChanged', { file })]
   for (const x of added.slice(0, 5)) L.push(`  + ${x}`)
   for (const x of removed.slice(0, 5)) L.push(`  - ${x}`)
   return L.join('\n')

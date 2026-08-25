@@ -142,6 +142,24 @@ const koReason: string = (await post('/pre', { tool_name: 'Edit', tool_input: { 
   .hookSpecificOutput?.permissionDecisionReason ?? ''
 ok('데몬도 다시 안 켜고 말을 바꾼다', /보호된 파일입니다/.test(koReason), koReason)
 
+console.log(`${NL}[영어로 부르면 CLI 출력에 한글이 없다]`)
+// 명령 하나하나 문구를 못 박으면 손볼 때마다 테스트가 깨진다.
+// "영어를 시켰으면 한글이 안 나온다" 는 불변식 하나로 전부 잡는다.
+// 이건 배포본으로 돌아야 의미가 있다 - 카탈로그가 번들에 실렸는지까지 보기 때문이다.
+{
+  const HANGUL = /[가-힣]/
+  const strip = (x: string) => x.replace(/\[[0-9;]*m/g, '')
+  for (const argv of [['--help'], ['status'], ['map'], ['doctor'], ['scan'], ['impact', 'App.jsx']]) {
+    const r = spawnSync(process.execPath, [CLI, ...argv, '--root', tmp, '--lang', 'en'], {
+      encoding: 'utf8',
+      timeout: 90_000,
+    })
+    const text = strip((r.stdout ?? '') + (r.stderr ?? ''))
+    const bad = text.split(NL).filter(l => HANGUL.test(l))
+    ok(`codyssey ${argv.join(' ')}`, bad.length === 0, bad.slice(0, 2).join(' | ').slice(0, 160))
+  }
+}
+
 // -------------------------------------------------------------- 정리
 await fetch(`${BASE}/api/shutdown`, { method: 'POST', signal: AbortSignal.timeout(3000) }).catch(() => {})
 await new Promise(r => setTimeout(r, 500))

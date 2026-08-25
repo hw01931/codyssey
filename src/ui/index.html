@@ -522,7 +522,7 @@ function viewModel() {
   }
 
   // 모듈로 접기
-  const modOf = new Map(S.nodes.map(n => [n.id, n.module || '(루트)']))
+  const modOf = new Map(S.nodes.map(n => [n.id, n.module || '(root)']))
   const stat = new Map()
   for (const n of files) {
     const m = modOf.get(n.id)

@@ -3,6 +3,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { health, resolvePort } from '../setup/port.ts'
 import { spawnDaemon } from '../setup/init.ts'
+import { t } from '../i18n/index.ts'
 
 /**
  * 에이전트가 먼저 물어볼 수 있는 창구.
@@ -40,7 +41,7 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
       for (let i = 0; i < 20 && !(await health(port)); i++) await new Promise(r => setTimeout(r, 250))
     }
     const res = await fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.timeout(5000) })
-    if (!res.ok) throw new Error(`codyssey 데몬 응답 오류 (${res.status})`)
+    if (!res.ok) throw new Error(t('mcp.daemonError', { status: res.status }))
     return res.json()
   }
 
@@ -51,26 +52,26 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
   server.registerTool(
     'get_overview',
     {
-      title: '저장소 구조 요약',
+      title: 'Repository structure at a glance',
       description:
-        '이 저장소의 기능(사용자가 쓰는 화면/API), 모듈(폴더 묶음), 잠긴 파일을 한 번에 본다. 작업을 시작하기 전에 부르면 좋다.',
+        'Features (screens and APIs people use), modules (folder groups) and locked files in this repository. Worth calling before you start work.',
       inputSchema: {},
     },
     async () => {
       const s = await api('/api/state')
       const L = [
-        `파일 ${s.counts.files} · 연결 ${s.counts.edges} · 기능 ${s.counts.features} · 잠김 ${s.counts.locks}`,
+        t('mcp.counts', { files: s.counts.files, edges: s.counts.edges, features: s.counts.features, locks: s.counts.locks }),
         '',
-        '기능 (사용자가 쓰는 화면/API)',
+        t('mcp.featuresTitle'),
         ...s.features.map(
-          (f: any) => `  ${f.label ?? f.id}  ${f.id}  (${f.size}개 파일, 전용 ${f.exclusive}개)${f.locked ? ' [잠김]' : ''}`,
+          (f: any) => `  ${f.label ?? f.id}  ${f.id}  ${t('mcp.featureRow', { files: f.size, exclusive: f.exclusive })}${f.locked ? ' ' + t('mcp.lockedTag') : ''}`,
         ),
         '',
-        '큰 모듈',
-        ...s.modules.slice(0, 12).map((m: any) => `  ${m.label ?? m.name}  (${m.name})  ${m.files}개`),
+        t('mcp.bigModules'),
+        ...s.modules.slice(0, 12).map((m: any) => `  ${m.label ?? m.name}  (${m.name})  ${t('report.count', { count: m.files })}`),
       ]
       const locked = s.nodes.filter((n: any) => n.locked).map((n: any) => n.id)
-      if (locked.length) L.push('', `잠긴 파일 (수정하면 차단됨)`, ...locked.map((f: string) => `  ${f}`))
+      if (locked.length) L.push('', t('mcp.lockedTitle'), ...locked.map((f: string) => `  ${f}`))
       return text(L.join('\n'))
     },
   )
@@ -78,16 +79,16 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
   server.registerTool(
     'impact_of',
     {
-      title: '이 파일을 고치면 무엇이 영향받나',
+      title: 'What this file affects',
       description:
-        '파일 하나를 수정했을 때 깨질 수 있는 기능·모듈과 그 파일을 쓰는 곳을 알려준다. 고치기 전에 확인하라.',
-      inputSchema: { file: z.string().describe('레포 루트 기준 경로. 끝부분만 줘도 찾는다') },
+        'Which features and modules can break if you edit one file, and what uses it. Check before you edit.',
+      inputSchema: { file: z.string().describe('Path relative to the repo root. A trailing fragment is enough.') },
     },
     async ({ file }) => {
       const s = await api('/api/state')
       const node =
         s.nodes.find((n: any) => n.id === file) ?? s.nodes.find((n: any) => n.id.endsWith(file))
-      if (!node) return text(`그래프에서 못 찾음: ${file}`)
+      if (!node) return text(t('mcp.notInGraph', { file }))
 
       // CLI 의 impact 는 전이적으로 세는데 여기만 직접 연결만 세면
       // 같은 이름의 지표가 표면마다 달라진다. 둘 다 같은 값을 내야 한다.
@@ -95,13 +96,13 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
       const users = transitiveUsers(s.edges, node.id)
       const uses = s.edges.filter((e: any) => e.from === node.id).map((e: any) => e.to)
       const L = [
-        `${node.label ?? node.id}  (${node.id})${node.locked ? '  [잠김 - 수정하면 차단됨]' : ''}`,
-        `속한 곳: ${node.moduleLabel ?? node.module ?? '-'}`,
+        `${node.label ?? node.id}  (${node.id})${node.locked ? '  ' + t('mcp.lockedInline') : ''}`,
+        t('mcp.belongsTo', { module: node.moduleLabel ?? node.module ?? '-' }),
         node.features.length
-          ? `영향 기능 ${node.features.length}개: ${(node.featureLabels ?? node.features).join(', ')}`
-          : '어느 기능에도 안 속함',
-        `이 파일을 쓰는 곳 ${users.length}개 (직접 ${direct.length}개)${users.length ? ': ' + users.slice(0, 20).join(', ') : ''}`,
-        `이 파일이 쓰는 것 ${uses.length}개${uses.length ? ': ' + uses.slice(0, 20).join(', ') : ''}`,
+          ? t('mcp.affects', { count: node.features.length, list: (node.featureLabels ?? node.features).join(', ') })
+          : t('mcp.noFeature'),
+        t('mcp.usedBy', { count: users.length, direct: direct.length }) + (users.length ? ': ' + users.slice(0, 20).join(', ') : ''),
+        t('mcp.uses', { count: uses.length }) + (uses.length ? ': ' + uses.slice(0, 20).join(', ') : ''),
       ]
       return text(L.join('\n'))
     },
@@ -110,9 +111,9 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
   server.registerTool(
     'find_file',
     {
-      title: '파일 찾기',
-      description: '이름 조각이나 기능 이름으로 파일을 찾는다. 어디를 고쳐야 할지 모를 때 쓴다.',
-      inputSchema: { query: z.string().describe('파일명 조각, 폴더명, 또는 기능 이름') },
+      title: 'Find a file',
+      description: 'Find files by a name fragment or a feature name. Use it when you do not know where to edit.',
+      inputSchema: { query: z.string().describe('A filename fragment, a folder name, or a feature name') },
     },
     async ({ query }) => {
       const s = await api('/api/state')
@@ -122,19 +123,19 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
         .filter((f: any) => f.id.toLowerCase().includes(q))
         .flatMap((f: any) => s.nodes.filter((n: any) => n.features.includes(f.id)))
       const hits = [...new Set([...byName, ...byFeature].map((n: any) => n.id))].sort().slice(0, 30)
-      if (!hits.length) return text(`'${query}' 로 찾은 파일이 없습니다.`)
-      return text([`'${query}' 결과 ${hits.length}개`, ...hits.map(h => `  ${h}`)].join('\n'))
+      if (!hits.length) return text(t('mcp.noHits', { query }))
+      return text([t('mcp.hits', { query, count: hits.length }), ...hits.map(h => `  ${h}`)].join('\n'))
     },
   )
 
   server.registerTool(
     'check_edit',
     {
-      title: '이 파일을 고쳐도 되나',
-      description: '수정하면 차단되는지 미리 확인한다. 막히고 나서 되돌리는 것보다 낫다.',
+      title: 'May I edit this file',
+      description: 'Check in advance whether an edit would be blocked. Better than being stopped after the fact.',
       inputSchema: {
-        file: z.string().describe('레포 루트 기준 경로'),
-        adding: z.string().optional().describe('추가할 코드 (import 규칙 검사용)'),
+        file: z.string().describe('Path relative to the repo root'),
+        adding: z.string().optional().describe('Code you are about to add (used to check import rules)'),
       },
     },
     async ({ file, adding }) => {
@@ -146,10 +147,10 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
       })
       const j: any = await res.json()
       const d = j.hookSpecificOutput?.permissionDecision
-      if (!d) return text(`${file} - 자유롭게 고칠 수 있습니다.`)
+      if (!d) return text(t('mcp.free', { file }))
       return text(
         [
-          `${file} - ${d === 'deny' ? '차단됩니다' : '사람 확인이 필요합니다'}`,
+          d === 'deny' ? t('mcp.willBlock', { file }) : t('mcp.needsHuman', { file }),
           j.hookSpecificOutput.permissionDecisionReason ?? '',
           j.hookSpecificOutput.additionalContext ?? '',
         ]
@@ -162,26 +163,26 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
   server.registerTool(
     'get_unlabeled',
     {
-      title: '아직 사람 이름이 없는 것들',
+      title: 'Things that have no human-readable name yet',
       description:
-        '이 저장소의 기능과 폴더 묶음 중 아직 사람이 읽는 이름이 없는 것을 준다. ' +
-        'set_labels 로 이름을 붙여주면 코드를 모르는 사람도 알아볼 수 있게 된다. ' +
-        '처음 한 번만 하면 되고 결과는 파일에 저장된다.',
+        'Features and folder groups in this repository that still have no human-readable name. ' +
+        'Name them with set_labels so someone who cannot read code can still recognise them. ' +
+        'Once is enough - the result is saved to a file.',
       inputSchema: {},
     },
     async () => {
       const u = await api('/api/unlabeled')
-      if (!u.features.length && !u.modules.length) return text('전부 이름이 붙어 있습니다.')
+      if (!u.features.length && !u.modules.length) return text(t('mcp.allLabeled'))
       return text(
         [
-          '아래 항목에 짧은 한국어 이름을 붙여 set_labels 로 보내주세요.',
-          '코드를 전혀 모르는 사람이 읽는다고 생각하고, 5글자 안팎으로 지어주세요.',
-          '예: "PAGE /checkout" -> "결제 화면",  "api/services" -> "서버 처리 로직"',
+          t('mcp.labelAsk') + ' ' + t('mcp.labelLang'),
+          t('mcp.labelHow'),
+          t('mcp.labelExample'),
           '',
-          '기능:',
+          t('mcp.labelFeatures'),
           ...u.features.map((f: string) => `  ${f}`),
           '',
-          '폴더 묶음:',
+          t('mcp.labelModules'),
           ...u.modules.map((m: string) => `  ${m}`),
         ].join('\n'),
       )
@@ -191,14 +192,14 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
   server.registerTool(
     'set_labels',
     {
-      title: '사람이 읽는 이름 저장',
+      title: 'Save human-readable names',
       description:
-        '기능·폴더·파일에 사람이 읽는 이름을 붙여 .codyssey/labels.yaml 에 저장한다. ' +
-        '한 번 저장하면 계속 쓰이고, 사람이 파일을 직접 고칠 수도 있다.',
+        'Attach human-readable names to features, folders and files, saved to .codyssey/labels.yaml. ' +
+        'Saved once, used from then on, and a person can edit the file directly.',
       inputSchema: {
-        features: z.record(z.string()).optional().describe('진입점 id -> 이름. 예: {"PAGE /checkout": "결제 화면"}'),
-        modules: z.record(z.string()).optional().describe('폴더 묶음 -> 이름. 예: {"api/services": "서버 처리 로직"}'),
-        files: z.record(z.string()).optional().describe('파일 경로 -> 이름'),
+        features: z.record(z.string()).optional().describe('entrypoint id -> name'),
+        modules: z.record(z.string()).optional().describe('folder group -> name'),
+        files: z.record(z.string()).optional().describe('file path -> name'),
       },
     },
     async ({ features, modules, files }) => {
@@ -209,7 +210,7 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
         signal: AbortSignal.timeout(5000),
       })
       const j: any = await res.json()
-      return text(`저장했습니다. 기능 ${j.counts.features}개, 폴더 ${j.counts.modules}개, 파일 ${j.counts.files}개.`)
+      return text(t('mcp.labelSaved', { features: j.counts.features, modules: j.counts.modules, files: j.counts.files }))
     },
   )
 

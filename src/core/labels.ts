@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import YAML from 'yaml'
 import { t, getLang } from '../i18n/index.ts'
+import { ROOT_MODULE } from './modules.ts'
 
 /**
  * 사람이 읽는 이름.
@@ -47,10 +48,10 @@ export function saveLabels(repoRoot: string, labels: Labels) {
   const p = labelsPath(repoRoot)
   fs.mkdirSync(path.dirname(p), { recursive: true })
   const header = [
-    '# 사람이 읽는 이름',
+    t('labels.header1'),
     '#',
-    '# AI 가 한 번 붙여주고 여기에 저장됩니다. 틀린 게 있으면 직접 고치세요.',
-    '# 이 파일은 커밋하는 게 좋습니다. 팀원과 AI 가 같은 이름을 보게 됩니다.',
+    t('labels.header2'),
+    t('labels.header3'),
     '',
   ].join('\n')
   // 정렬해서 쓴다. 순서가 흔들리면 diff 가 소음이 된다. (P8)
@@ -161,7 +162,7 @@ export function describeFeature(id: string, labels: Labels): string {
 export function describeModule(name: string, labels: Labels): string {
   const custom = labels.modules[name]
   if (custom) return custom
-  const segs = name.split('/').filter(s => s && s !== '(루트)')
+  const segs = name.split('/').filter(s => s && s !== ROOT_MODULE)
   if (!segs.length) return t('label.root')
   return segs.map(word).join(' ')
 }

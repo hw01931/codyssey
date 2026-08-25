@@ -69,7 +69,7 @@ export function buildSymbolGraph(files: Map<string, FileInfo>, ctx: ResolveCtx):
       const to = resolveName(f, c.to)
       if (!to) continue
       // 모듈 레벨에서 부른 건 파일 자체가 부른 것으로 본다
-      const from = c.from ? symId(f.rel, c.from) : `${f.rel}#(모듈)`
+      const from = c.from ? symId(f.rel, c.from) : `${f.rel}#(module)`
       if (from === to) continue
       push(callers, to, from)
       push(callees, from, to)

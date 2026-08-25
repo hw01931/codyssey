@@ -6,6 +6,7 @@ import { scan } from '../index/scan.ts'
 import { computeFeatures } from '../core/features.ts'
 import { computeModules, crossModuleShared } from '../core/modules.ts'
 import { findViolations, type Rules } from '../core/rules.ts'
+import { t } from '../i18n/index.ts'
 
 export interface ArchDiff {
   base: string
@@ -99,30 +100,30 @@ async function snapshot(dir: string, rules: Rules): Promise<Snapshot> {
 }
 
 export function renderDiff(d: ArchDiff): string {
-  if (d.empty) return `## 아키텍처 변화 없음\n\n\`${d.base}\` 대비 구조가 그대로입니다.`
+  if (d.empty) return `## ${t('diff.noChange')}\n\n${t('diff.sameAs', { base: d.base })}`
 
-  const L = [`## 아키텍처 변화 (\`${d.base}\` 대비)`, '']
+  const L = [`## ${t('diff.title', { base: d.base })}`, '']
   const block = (title: string, items: string[], mark = '') => {
     if (!items.length) return
     L.push(`### ${title}`, '')
     for (const x of items.slice(0, 20)) L.push(`- ${mark}\`${x}\``)
-    if (items.length > 20) L.push(`- ... 외 ${items.length - 20}개`)
+    if (items.length > 20) L.push(t('diff.andMore', { count: items.length - 20 }))
     L.push('')
   }
 
   if (d.lockedTouched.length) {
-    L.push('### 잠긴 파일이 바뀌었습니다', '')
+    L.push('### ' + t('diff.lockedChanged'), '')
     for (const f of d.lockedTouched) L.push(`- \`${f}\``)
-    L.push('', '사람 승인이 필요한 파일입니다. 의도한 변경인지 확인해 주세요.', '')
+    L.push('', t('diff.lockedNote'), '')
   }
-  block('새 규칙 위반', d.violationsAdded)
-  block('새 진입점', d.entriesAdded)
-  block('사라진 진입점', d.entriesRemoved)
-  block('새 모듈 간 연결', d.edgesAdded)
-  block('끊어진 모듈 간 연결', d.edgesRemoved)
-  block('새로 여러 곳이 공유하게 된 파일', d.sharedAdded)
+  block(t('diff.violations'), d.violationsAdded)
+  block(t('diff.entriesAdded'), d.entriesAdded)
+  block(t('diff.entriesRemoved'), d.entriesRemoved)
+  block(t('diff.edgesAdded'), d.edgesAdded)
+  block(t('diff.edgesRemoved'), d.edgesRemoved)
+  block(t('diff.sharedAdded'), d.sharedAdded)
 
-  L.push('<sub>codyssey · 정적 분석, LLM 호출 없음</sub>')
+  L.push(`<sub>${t('diff.footer')}</sub>`)
   return L.join('\n')
 }
 

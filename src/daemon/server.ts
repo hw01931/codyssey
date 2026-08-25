@@ -15,7 +15,7 @@ import type { ResolveCtx } from '../core/ir.ts'
 import { deltaBrief, promptBrief, sessionBrief, snapshotEdges, type CtxInput } from './context.ts'
 import { brokenContracts, contractsOf, duplicateNames, nameIndex, testsFor } from '../core/contract.ts'
 import { describeFeature, describeFile, describeModule, emptyLabels, loadLabels, saveLabels, unlabeled, type Labels } from '../core/labels.ts'
-import { setLang, resolveLang } from '../i18n/index.ts'
+import { t, setLang, resolveLang } from '../i18n/index.ts'
 
 /**
  * 웹 화면이 있는 곳.
@@ -237,10 +237,10 @@ export class Daemon {
   setFeatureLock(id: unknown, locked: boolean, scope: 'exclusive' | 'all' = 'exclusive', reason?: string):
     { ok: true } | { ok: false; error: string } {
     if (typeof id !== 'string' || !id.trim() || !this.features.entries.some(e => e.id === id)) {
-      return { ok: false, error: `그런 기능이 없습니다: ${JSON.stringify(id)}` }
+      return { ok: false, error: t('daemon.noSuchFeature', { id: JSON.stringify(id) }) }
     }
     this.rules.features = (this.rules.features ?? []).filter(f => f.id !== id)
-    if (locked) this.rules.features.push({ id, scope, reason: reason ?? `'${id}' 기능 잠금` })
+    if (locked) this.rules.features.push({ id, scope, reason: reason ?? t('daemon.featureLockReason', { id }) })
     this.rules.features.sort((a, b) => (a.id < b.id ? -1 : 1))
     this.saveRules()
     return { ok: true }
@@ -256,19 +256,19 @@ export class Daemon {
   setLock(file: unknown, locked: boolean, reason?: string): { ok: true } | { ok: false; error: string } {
     const path = typeof file === 'string' ? file.trim() : ''
     if (!path || path === 'undefined' || path === 'null') {
-      return { ok: false, error: `잠글 파일 경로가 필요합니다 (받은 값: ${JSON.stringify(file)})` }
+      return { ok: false, error: t('daemon.needFilePath', { got: JSON.stringify(file) }) }
     }
     const rel = this.toRel(path)
     if (rel.startsWith('../')) {
-      return { ok: false, error: `이 프로젝트 밖의 파일입니다: ${path}` }
+      return { ok: false, error: t('daemon.outsideProject', { path }) }
     }
     // 글롭이 아니면서 그래프에도 없으면 오타일 가능성이 높다
     if (!rel.includes('*') && !this.graph.nodes.has(rel)) {
-      return { ok: false, error: `그런 파일이 없습니다: ${rel}` }
+      return { ok: false, error: t('daemon.noSuchFile', { file: rel }) }
     }
 
     this.rules.protect = this.rules.protect.filter(p => p.path !== rel)
-    if (locked) this.rules.protect.push({ path: rel, reason: reason?.trim() || '수동 잠금' })
+    if (locked) this.rules.protect.push({ path: rel, reason: reason?.trim() || t('daemon.manualLock') })
     this.rules.protect.sort((a, b) => (a.path < b.path ? -1 : 1))
     this.saveRules()
     return { ok: true }
@@ -311,12 +311,12 @@ export class Daemon {
     if (!broken.length) return { action: 'allow' }
 
     const c = broken[0]
-    const others = broken.length > 1 ? ` 외 ${broken.length - 1}개` : ''
+    const others = broken.length > 1 ? t('daemon.contractOthers', { count: broken.length - 1 }) : ''
     return {
       action: this.rules.contracts?.mode === 'block' ? 'block' : 'ask',
       rule: `contract: ${file}#${c.name}`,
-      reason: `'${c.name}' 을(를) 없애려 합니다${others}. ${c.users.length}곳이 이 이름을 가져다 씁니다.`,
-      hint: `쓰는 곳: ${c.users.slice(0, 5).join(', ')}${c.users.length > 5 ? ' 외' : ''}`,
+      reason: t('daemon.contractBreak', { name: c.name, others, count: c.users.length }),
+      hint: t('daemon.contractUsers', { list: c.users.slice(0, 5).join(', '), more: c.users.length > 5 ? ' ' + t('ctx.andMore') : '' }),
     }
   }
 
@@ -326,11 +326,11 @@ export class Daemon {
 
     const dupes = duplicateNames(this.names, file, edit)
     for (const d of dupes) {
-      notes.push(`'${d.name}' 은(는) ${d.existing.slice(0, 2).join(', ')} 에 이미 있습니다. 새로 만들 필요가 있는지 확인하세요.`)
+      notes.push(t('daemon.duplicateName', { name: d.name, where: d.existing.slice(0, 2).join(', ') }))
     }
 
     const tests = testsFor(this.graph, file)
-    if (tests.length) notes.push(`이 파일을 검증하는 테스트: ${tests.slice(0, 3).join(', ')}${tests.length > 3 ? ` 외 ${tests.length - 3}개` : ''}`)
+    if (tests.length) notes.push(t('daemon.testsFor', { list: tests.slice(0, 3).join(', '), more: tests.length > 3 ? t('daemon.contractOthers', { count: tests.length - 3 }) : '' }))
 
     return notes
   }
@@ -351,10 +351,10 @@ export class Daemon {
     // 1) 확실히 짚어낸 쓰기 대상
     let worst: Verdict = { action: 'allow' }
     let worstFile = ''
-    for (const t of targets) {
-      const file = this.toRel(t)
+    for (const target of targets) {
+      const file = this.toRel(target)
       if (file.startsWith('../')) {
-        this.foreignAllow(tool, t)
+        this.foreignAllow(tool, target)
         continue
       }
       const v = this.checkFile(file, command)
@@ -365,7 +365,7 @@ export class Daemon {
     }
     if (worst.action !== 'allow') {
       this.log({ at: Date.now(), file: worstFile, action: worst.action, tool, reason: worst.reason, rule: worst.rule })
-      return { ...worst, reason: `${worst.reason}\n이 명령이 '${worstFile}' 을 고칩니다.` }
+      return { ...worst, reason: `${worst.reason}\n${t('daemon.bashTouches', { file: worstFile })}` }
     }
 
     // 2) 대상을 못 짚은 명령(python -c, git checkout, find -exec ...).
@@ -377,9 +377,9 @@ export class Daemon {
       if (hit.length) {
         const verdict: Verdict = {
           action: 'block',
-          rule: 'bash: 해석할 수 없는 명령',
-          reason: `잠긴 파일이 명령에 들어 있습니다: ${hit.slice(0, 3).join(', ')}`,
-          hint: '이 명령이 그 파일을 어떻게 건드릴지 알 수 없어서 막았습니다. 읽기만 한다면 Read 도구를 쓰세요.',
+          rule: t('daemon.bashOpaqueRule'),
+          reason: t('daemon.bashOpaque', { list: hit.slice(0, 3).join(', ') }),
+          hint: t('daemon.bashOpaqueHint'),
         }
         this.log({ at: Date.now(), file: hit[0], action: 'block', tool, reason: verdict.reason, rule: verdict.rule })
         return verdict
@@ -410,7 +410,7 @@ export class Daemon {
 
   private foreignAllow(tool: string, raw: string): Verdict {
     this.foreign++
-    this.log({ at: Date.now(), file: raw, action: 'foreign', tool, reason: '다른 프로젝트의 파일입니다' })
+    this.log({ at: Date.now(), file: raw, action: 'foreign', tool, reason: t('daemon.foreignFile') })
     return { action: 'allow' }
   }
 
@@ -516,7 +516,7 @@ export class Daemon {
               const node = this.symbols.nodes.get(sy.id)!
               return {
                 file: node.file,
-                label: `${node.name} (${this.say.file(node.file)} 안)`,
+                label: t('daemon.symbolIn', { name: node.name, file: this.say.file(node.file) }),
                 why: sy.callers.map(c => c.split('#')[1] ?? c),
                 kind: 'symbol' as const,
                 symbol: node.name,
@@ -603,7 +603,7 @@ export class Daemon {
           String(body.tool_name ?? '') === 'Bash'
             ? shellWrites(String(input.command ?? '')).targets
             : [String(input.file_path ?? '')]
-        const rels = touched.map(t => this.toRel(t)).filter(r => r && !r.startsWith('../') && adapterFor(r))
+        const rels = touched.map(f => this.toRel(f)).filter(r => r && !r.startsWith('../') && adapterFor(r))
         if (!rels.length) return send(200, {})
 
         const rel = rels[0]

@@ -1,6 +1,13 @@
 import type { Graph } from './graph.ts'
 
 /**
+ * 최상위 폴더를 가리키는 이름. 말에 묶이면 안 된다 - 영어 화면에 한글이 새고,
+ * 말을 바꿀 때마다 labels.yaml 의 키가 달라져 저장해둔 이름을 잃는다.
+ * 보여줄 때만 번역한다 (describeModule).
+ */
+export const ROOT_MODULE = '(root)'
+
+/**
  * 모듈 = 폴더로 정해지는 코드 묶음.
  *
  * '기능 = 진입점 도달' 만으로는 라이브러리와 CLI 를 못 덮는다. 실측하니
@@ -29,7 +36,7 @@ export function moduleOf(file: string, projectRoot: string, depth = 2): string {
   const segs = rest.split('/')
   segs.pop() // 파일명 제거
   const taken = segs.slice(0, depth)
-  return base + (taken.length ? taken.join('/') : '(루트)')
+  return base + (taken.length ? taken.join('/') : ROOT_MODULE)
 }
 
 export function computeModules(

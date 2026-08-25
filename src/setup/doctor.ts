@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import YAML from 'yaml'
 import { health, loadPort, projectPort, resolvePort, samePath } from './port.ts'
+import { t } from '../i18n/index.ts'
 
 export interface Check {
   ok: boolean
@@ -24,29 +25,29 @@ export async function doctor(repoRoot: string): Promise<Check[]> {
 
   checks.push({
     ok: true,
-    label: '이 프로젝트의 포트',
-    detail: `${port}${loadPort(root) ? '' : ` (경로에서 계산: ${projectPort(root)})`}`,
+    label: t('doctor.port'),
+    detail: `${port}${loadPort(root) ? '' : ' ' + t('doctor.portComputed', { port: projectPort(root) })}`,
   })
 
   // 1) 데몬
   const h = await health(port, 1500)
   if (!h) {
-    checks.push({ ok: false, label: '데몬이 꺼져 있습니다', fix: 'codyssey start' })
+    checks.push({ ok: false, label: t('doctor.daemonOff'), fix: 'codyssey start' })
   } else if (!samePath(h.repoRoot, root)) {
     checks.push({
       ok: false,
-      label: '포트를 다른 프로젝트가 쓰고 있습니다',
-      detail: `그쪽 폴더: ${h.repoRoot}`,
-      fix: 'codyssey init 을 다시 실행하면 이 프로젝트 전용 포트를 잡습니다',
+      label: t('doctor.portForeign'),
+      detail: t('doctor.theirFolder', { root: h.repoRoot }),
+      fix: t('doctor.fixReinit'),
     })
   } else {
-    checks.push({ ok: true, label: '데몬 정상', detail: `${h.files}개 파일` })
+    checks.push({ ok: true, label: t('doctor.daemonOk'), detail: t('doctor.filesCount', { count: h.files }) })
   }
 
   // 2) 훅 설정
   const settingsPath = path.join(root, '.claude', 'settings.json')
   if (!fs.existsSync(settingsPath)) {
-    checks.push({ ok: false, label: '.claude/settings.json 이 없습니다', fix: 'codyssey init' })
+    checks.push({ ok: false, label: t('doctor.noSettings'), fix: 'codyssey init' })
   } else {
     try {
       const s = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
@@ -70,49 +71,49 @@ export async function doctor(repoRoot: string): Promise<Check[]> {
       if (noBash.length) {
         checks.push({
           ok: false,
-          label: 'Bash 편집이 훅을 안 거칩니다',
-          detail: `matcher: ${noBash.join(', ') || '(없음)'}`,
-          fix: 'codyssey init 을 다시 실행하면 matcher 에 Bash 가 들어갑니다',
+          label: t('doctor.bashNotHooked'),
+          detail: `matcher: ${noBash.join(', ') || t('doctor.none')}`,
+          fix: t('doctor.fixBash'),
         })
       }
       if (!urls.length) {
-        checks.push({ ok: false, label: '훅이 설정돼 있지 않습니다', fix: 'codyssey init' })
+        checks.push({ ok: false, label: t('doctor.noHooksSet'), fix: 'codyssey init' })
       } else {
         const wrong = urls.filter(u => !u.includes(`:${port}/`))
         checks.push(
           wrong.length
             ? {
                 ok: false,
-                label: '훅이 엉뚱한 포트를 가리킵니다',
+                label: t('doctor.wrongPort'),
                 detail: wrong.join(', '),
-                fix: 'codyssey init 을 다시 실행하면 고쳐집니다',
+                fix: t('doctor.fixReinitSimple'),
               }
-            : { ok: true, label: '훅 설정 정상', detail: `${urls.length}개` },
+            : { ok: true, label: t('doctor.hooksOk'), detail: t('doctor.count', { count: urls.length }) },
         )
       }
     } catch {
-      checks.push({ ok: false, label: '.claude/settings.json 을 읽을 수 없습니다', fix: 'JSON 문법을 확인해 주세요' })
+      checks.push({ ok: false, label: t('doctor.cantReadSettings'), fix: t('doctor.fixJson') })
     }
   }
 
   // 3) 규칙 파일
   const rulesPath = path.join(root, '.codyssey', 'rules.yaml')
   if (!fs.existsSync(rulesPath)) {
-    checks.push({ ok: false, label: 'rules.yaml 이 없습니다', fix: 'codyssey init' })
+    checks.push({ ok: false, label: t('doctor.noRules'), fix: 'codyssey init' })
   } else {
     try {
       const r = YAML.parse(fs.readFileSync(rulesPath, 'utf8')) ?? {}
       const n = (r.protect?.length ?? 0) + (r.features?.length ?? 0) + (r.layers?.length ?? 0)
       checks.push({
         ok: true,
-        label: '규칙 파일 정상',
-        detail: n ? `잠금/규칙 ${n}건` : '아직 아무것도 안 잠갔습니다',
+        label: t('doctor.rulesOk'),
+        detail: n ? t('doctor.rulesCount', { count: n }) : t('doctor.nothingLocked'),
       })
     } catch {
       checks.push({
         ok: false,
-        label: 'rules.yaml 을 읽을 수 없습니다',
-        fix: '문법이 깨지면 아무것도 막지 않습니다. 웹 화면에서 다시 잠가주세요',
+        label: t('doctor.cantReadRules'),
+        fix: t('doctor.fixRules'),
       })
     }
   }
@@ -127,9 +128,9 @@ export async function doctor(repoRoot: string): Promise<Check[]> {
       if (pf.length) {
         checks.push({
           ok: false,
-          label: `읽지 못한 파일이 ${pf.length}개 있습니다`,
+          label: t('doctor.unparsed', { count: pf.length }),
           detail: pf.slice(0, 3).map(x => x.file).join(', '),
-          fix: '그 파일들은 보호 대상에서 빠집니다. 문법 오류가 없는지 확인해 주세요',
+          fix: t('doctor.fixUnparsed'),
         })
       }
     } catch {
@@ -144,9 +145,9 @@ export async function doctor(repoRoot: string): Promise<Check[]> {
       if (st.foreign) {
         checks.push({
           ok: false,
-          label: '이 폴더 밖의 파일 요청이 들어오고 있습니다',
-          detail: `${st.foreign}건`,
-          fix: '다른 프로젝트의 .claude/settings.json 이 이 포트를 가리킵니다. 그쪽에서 codyssey init 을 다시 실행하세요',
+          label: t('doctor.foreignRequests'),
+          detail: t('doctor.foreignCount', { count: st.foreign }),
+          fix: t('doctor.fixForeign'),
         })
       }
     } catch {
