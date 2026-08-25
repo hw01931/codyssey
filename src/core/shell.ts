@@ -19,6 +19,44 @@ export interface ShellWrites {
   opaque: boolean
   /** 명령에 등장한 경로처럼 생긴 토큰. opaque 일 때 글롭 대조에 쓴다 */
   words: string[]
+  /**
+   * 해석 못 한 명령 쪽에 등장한 텍스트만 모은 것.
+   *
+   * 예전에는 명령문 **전체**에서 잠긴 파일 이름을 찾았다. 그래서
+   * `python build.py; grep -n x locked.ts` 처럼 읽기만 하는 부분에 이름이
+   * 보여도 막혔다. 실제로 이 도구를 만들다가 세 번 걸렸고, 읽기 전용까지
+   * 막으면 사람이 도구를 끈다 (D9).
+   *
+   * 이제 근거는 '쓸 수도 있는 명령' 쪽 텍스트로 한정한다.
+   * `python -c "open('locked.ts','w')"` 는 그 안에 이름이 있으므로 여전히 막힌다.
+   */
+  opaqueWords: string[]
+}
+
+/**
+ * 읽기만 하는 명령. 이쪽 인자는 차단 근거가 되지 않는다.
+ * 여기 없는 명령은 '모른다' 로 두는 게 맞다 - 쓰기를 읽기로 잘못 분류하면
+ * 그때부터 잠금이 무력해진다.
+ */
+const READ_ONLY = new Set([
+  'cat', 'bat', 'head', 'tail', 'less', 'more', 'grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack',
+  'ls', 'dir', 'tree', 'stat', 'file', 'wc', 'du', 'df', 'pwd', 'echo', 'printf',
+  'diff', 'cmp', 'md5sum', 'sha1sum', 'sha256sum', 'cksum',
+  'which', 'type', 'whereis', 'readlink', 'realpath', 'basename', 'dirname',
+  'uniq', 'cut', 'tr', 'nl', 'column', 'date', 'printenv',
+])
+
+/**
+ * 읽는 것처럼 생겼는데 플래그 하나로 파일을 쓰는 것들.
+ *
+ * 읽기 전용 목록에 잘못 넣으면 그때부터 잠금이 무력해진다.
+ * `sort -o f` 와 `yq -i f` 를 넣어봤다가 실제로 뚫렸다.
+ * 그래서 이쪽은 따로 다룬다. `-o` 다음 인자 또는 `-i` 일 때의 피연산자가 대상이다.
+ */
+const FLAG_WRITERS: Record<string, { out?: RegExp; inPlace?: RegExp }> = {
+  sort: { out: /^(-o|--output)$/ },
+  jq: { inPlace: /^(-i|--in-place)$/ },
+  yq: { inPlace: /^(-i|--inplace|--in-place)$/ },
 }
 
 /** 인자를 그대로 덮어쓰거나 지우는 것들 */
@@ -49,14 +87,21 @@ const GIT_WRITES = new Set([
 const MAX_DEPTH = 3
 
 export function shellWrites(command: string): ShellWrites {
-  const acc: Acc = { targets: new Set(), words: new Set(), opaque: false }
+  const acc: Acc = { targets: new Set(), words: new Set(), opaqueWords: new Set(), opaque: false }
   analyze(command, acc, 0)
-  return { targets: [...acc.targets].sort(), opaque: acc.opaque, words: [...acc.words].sort() }
+  return {
+    targets: [...acc.targets].sort(),
+    opaque: acc.opaque,
+    words: [...acc.words].sort(),
+    opaqueWords: [...acc.opaqueWords].sort(),
+  }
 }
 
 interface Acc {
   targets: Set<string>
   words: Set<string>
+  /** 해석 못 한 명령 쪽에서만 모은 것 */
+  opaqueWords: Set<string>
   opaque: boolean
 }
 
@@ -97,36 +142,67 @@ function analyzeSimple(toks: Tok[], acc: Acc, depth: number) {
 
   const cmd = base(words[k].text).toLowerCase()
   const args = words.slice(k + 1)
+
+  // 읽기만 하는 명령은 여기서 끝낸다. 리다이렉션은 위에서 이미 잡았으므로
+  // `grep x locked.ts > out.txt` 의 `out.txt` 는 그대로 대상으로 남는다.
+  if (READ_ONLY.has(cmd)) return
+
+  const fw = FLAG_WRITERS[cmd]
+  if (fw) {
+    if (fw.out) {
+      const i = args.findIndex(a => fw.out!.test(a.text))
+      if (i >= 0 && args[i + 1]) addTarget(acc, args[i + 1])
+      for (const a of args) if (/^(-o|--output)=/.test(a.text)) addTarget(acc, { ...a, text: a.text.split('=').slice(1).join('=') })
+    }
+    if (fw.inPlace && args.some(a => fw.inPlace!.test(a.text))) {
+      // 제자리 편집이면 피연산자 전부가 대상이다. 어느 것이 스크립트인지 모르므로
+      // 경로처럼 생긴 것만 고른다.
+      for (const a of operands(args)) if (looksLikePath(a.text)) addTarget(acc, a)
+    }
+    return
+  }
+
   for (const a of args) if (looksLikePath(a.text)) acc.words.add(norm(a.text))
 
   // 3) 셸 문자열은 안쪽을 다시 본다. `bash -c "sed -i ... file"` 을 놓치지 않는다
+  /** 이 명령을 '못 짚었다' 로 표시하고, 그 안의 텍스트를 근거 후보로 남긴다. */
+  const markOpaque = () => {
+    acc.opaque = true
+    for (const a of args) {
+      acc.opaqueWords.add(norm(a.text))
+      // `python -c "open('locked.ts','w')"` 처럼 인자 안에 경로가 박혀 있는 경우.
+      // 토큰 하나가 통째로 스크립트라서 경로만 따로 떼어낼 수 없다.
+      for (const m of a.text.matchAll(/[\w./\\~@+-]{3,}/g)) acc.opaqueWords.add(norm(m[0]))
+    }
+  }
+
   if (SHELLS.has(cmd)) {
     const c = flagValue(args, '-c')
     if (c !== null) analyze(c, acc, depth + 1)
-    else acc.opaque = true
+    else markOpaque()
     return
   }
   if (cmd === 'xargs') {
     const sub = args.filter(a => !a.text.startsWith('-'))
     if (sub.length) analyzeSimple(sub, acc, depth + 1)
-    else acc.opaque = true
+    else markOpaque()
     return
   }
 
   // 4) 인터프리터는 무엇이든 쓸 수 있고, 무엇을 쓸지는 알 수 없다
   if (INTERPRETERS.has(cmd) || OPAQUE_CMDS.has(cmd)) {
-    acc.opaque = true
+    markOpaque()
     return
   }
 
   if (cmd === 'git') {
     const sub = args.find(a => !a.text.startsWith('-'))?.text
-    if (sub && GIT_WRITES.has(sub)) acc.opaque = true
+    if (sub && GIT_WRITES.has(sub)) markOpaque()
     return
   }
 
   if (cmd === 'find') {
-    if (args.some(a => ['-delete', '-exec', '-execdir', '-ok', '-okdir'].includes(a.text))) acc.opaque = true
+    if (args.some(a => ['-delete', '-exec', '-execdir', '-ok', '-okdir'].includes(a.text))) markOpaque()
     return
   }
 
@@ -196,12 +272,14 @@ function addTarget(acc: Acc, t: Tok) {
   // 변수·명령치환이 섞이면 실제 경로를 알 수 없다. 짚었다고 주장하면 안 된다
   if (!t.quoted && /[$`]/.test(v)) {
     acc.opaque = true
+    acc.opaqueWords.add(norm(v))
     return
   }
   if (/[*?[\]]/.test(v)) {
     // 글롭은 여기서 못 펼친다. 대조는 잠금 목록 쪽에서 한다
     acc.opaque = true
     acc.words.add(norm(v))
+    acc.opaqueWords.add(norm(v))
     return
   }
   if (!looksLikePath(v)) return

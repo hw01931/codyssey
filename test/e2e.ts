@@ -208,6 +208,51 @@ eq('읽기는 통과', decision(await bash('cat api/services/payment.py')), 'all
 eq('grep 은 통과', decision(await bash('grep -rn charge api/')), 'allow')
 eq('sed -n (출력 전용) 은 통과', decision(await bash(`sed -n '1,20p' api/services/payment.py`)), 'allow')
 eq('git status 는 통과', decision(await bash('git status --short')), 'allow')
+
+// 아래 셋은 이 도구를 만들다가 실제로 막혔던 명령이다. 전부 읽기만 한다.
+// 잠긴 파일 이름이 명령문 어딘가에 보이기만 하면 막던 규칙에 걸렸다.
+// 읽기 전용까지 막으면 사람이 도구를 끈다. 그게 D9 에서 걱정한 실패다.
+eq(
+  '잠긴 파일을 grep 하는 건 통과',
+  decision(await bash('grep -n charge api/services/payment.py')),
+  'allow',
+)
+eq(
+  '잠긴 파일이 든 폴더를 훑는 것도 통과',
+  decision(await bash('grep -rn charge api/ --include=*.py')),
+  'allow',
+)
+eq(
+  '해석 못 하는 명령과 같이 있어도, 읽기 쪽 인자는 근거가 안 된다',
+  decision(await bash('python build.py; grep -n charge api/services/payment.py')),
+  'allow',
+)
+eq('여러 줄로 이어져도 마찬가지', decision(await bash([
+  'node scripts/gen.js',
+  'head -20 api/services/payment.py',
+].join(String.fromCharCode(10)))), 'allow')
+
+// 그래도 진짜로 쓸 수 있는 쪽은 계속 막아야 한다.
+eq(
+  '해석 못 하는 명령이 그 파일을 직접 들고 있으면 막는다',
+  decision(await bash(`python -c "open('api/services/payment.py','a')"`)),
+  'deny',
+)
+eq(
+  '한 줄 안에서 읽고 나서 쓰면 막는다',
+  decision(await bash('cat api/services/payment.py | python patch.py > api/services/payment.py')),
+  'deny',
+)
+
+// 읽기 전용 목록에 잘못 넣으면 그때부터 잠금이 무력해진다.
+// '읽는 것처럼 생겼는데 쓰는' 것들을 일부러 넣어본다.
+eq('echo 리다이렉션은 여전히 막힌다', decision(await bash('echo x > api/services/payment.py')), 'deny')
+eq('echo 이어쓰기도 막힌다', decision(await bash('echo x >> api/services/payment.py')), 'deny')
+eq('sort -o 는 파일을 쓴다', decision(await bash('sort -o api/services/payment.py api/services/payment.py')), 'deny')
+eq('yq -i 는 제자리 편집이다', decision(await bash('yq -i .a=1 api/services/payment.py')), 'deny')
+eq('grep 결과를 잠긴 파일로 흘려도 막힌다', decision(await bash('grep -n x api/main.py > api/services/payment.py')), 'deny')
+eq('env 뒤에 숨겨도 막힌다', decision(await bash('env sed -i s/a/b/ api/services/payment.py')), 'deny')
+eq('cat 으로 덮어써도 막힌다', decision(await bash('cat /tmp/x > api/services/payment.py')), 'deny')
 eq('테스트 실행은 통과', decision(await bash('npm test -- --watch=false')), 'allow')
 eq('빌드 산출물 리다이렉션은 통과', decision(await bash('node build.mjs > dist/out.txt')), 'allow')
 eq('잠기지 않은 파일은 통과', decision(await bash(`sed -i 's/a/b/' api/services/order.py`)), 'allow')

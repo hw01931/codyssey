@@ -353,7 +353,7 @@ export class Daemon {
    */
   private decideBash(tool: string, command: string): Verdict {
     if (!command.trim()) return { action: 'allow' }
-    const { targets, opaque, words } = shellWrites(command)
+    const { targets, opaque, words, opaqueWords } = shellWrites(command)
 
     // 1) 확실히 짚어낸 쓰기 대상
     let worst: Verdict = { action: 'allow' }
@@ -376,11 +376,18 @@ export class Daemon {
     }
 
     // 2) 대상을 못 짚은 명령(python -c, git checkout, find -exec ...).
-    //    잠긴 파일 이름이 명령에 들어 있으면 막는다. 판단 근거가 '사람이 건 잠금' 이라
+    //    잠긴 파일 이름이 그 명령 쪽에 보이면 막는다. 판단 근거가 '사람이 건 잠금' 이라
     //    P4 를 어기지 않는다. 잠금과 무관한 명령은 여기까지 와도 통과한다.
+    //
+    //    예전에는 명령문 전체를 훑었다. 그래서
+    //    `python build.py; grep -n x locked.ts` 처럼 읽기만 하는 쪽에 이름이 보여도
+    //    막혔다. 이 도구를 만들다가 세 번 걸렸다. 읽기 전용까지 막으면 사람이
+    //    도구를 끈다 (D9). 이제 '쓸 수도 있는 명령' 쪽 텍스트만 근거로 쓴다.
     if (opaque) {
-      const cmd = command.replace(/\\/g, '/')
-      const hit = [...this.lockedFiles()].filter(f => cmd.includes(f) || words.some(w => matches(w, f))).sort()
+      const scope = opaqueWords.join(' ').replace(/\\/g, '/')
+      const hit = [...this.lockedFiles()]
+        .filter(f => scope.includes(f) || opaqueWords.some(w => matches(w, f)))
+        .sort()
       if (hit.length) {
         const verdict: Verdict = {
           action: 'block',
