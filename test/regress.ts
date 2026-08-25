@@ -98,6 +98,34 @@ const saved = fs.readFileSync(path.join(tmp, '.codyssey', 'rules.yaml'), 'utf8')
 ok('쓰레기 값이 파일에 안 남는다', !saved.includes('undefined'), saved.includes('undefined') ? '남음' : '')
 ok('한글 사유가 파일 왕복 후에도 온전하다', saved.includes('돈 계산은 함부로 못 바꿈'))
 
+// ---------------------------------------------------------------- 7. 말이 파일에 박제되지 않는다
+
+console.log(`${NL}[사람이 안 적은 사유는 말을 따라간다]`)
+// 잠글 때 사유를 안 주면 기본 문구가 붙는데, 그걸 그대로 rules.yaml 에 저장하면
+// 저장한 시점의 말로 얼어붙는다. 실제로 "App.jsx is protected. 수동 잠금" 이 나왔다.
+// 사람이 적은 사유는 그대로 두어야 하지만, 우리가 만든 문구는 보여줄 때 정한다.
+{
+  const { setLang } = await import('../src/i18n/index.ts')
+  await post('/api/lock', { file: 'web/lib/money.ts', locked: false })
+  await post('/api/lock', { file: 'web/app/admin/page.tsx', locked: true }) // 사유 없이
+  await new Promise(r => setTimeout(r, 400))
+  const yaml = fs.readFileSync(path.join(tmp, '.codyssey', 'rules.yaml'), 'utf8')
+  ok('잠금이 실제로 걸렸다', yaml.includes('web/app/admin/page.tsx'), yaml.split(NL).filter(l => l.includes('path')).join(' | '))
+  ok('사유를 안 주면 파일에 문구를 안 박는다', !/수동 잠금|locked by hand/.test(yaml), yaml.split(NL).filter(l => l.includes('reason')).join(' | '))
+
+  setLang('en')
+  const en = decide('web/app/admin/page.tsx')
+  ok('영어로 보면 영어로 나온다', !/[가-힣]/.test(String(en.reason)), String(en.reason))
+  setLang('ko')
+  const ko = decide('web/app/admin/page.tsx')
+  ok('한국어로 보면 한국어로 나온다', /[가-힣]/.test(String(ko.reason)), String(ko.reason))
+
+  await post('/api/lock', { file: 'api/services/order.py', locked: true, reason: 'Payment core' })
+  await new Promise(r => setTimeout(r, 400))
+  const kept = fs.readFileSync(path.join(tmp, '.codyssey', 'rules.yaml'), 'utf8')
+  ok('사람이 적은 사유는 그대로 남는다', kept.includes('Payment core'))
+}
+
 // ---------------------------------------------------------------- 6. export 만 떼는 계약 파괴
 
 console.log(`${NL}[export 만 떼어내는 것도 잡는다]`)

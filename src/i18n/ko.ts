@@ -10,6 +10,7 @@ import type { en } from './en.ts'
 export const ko: Record<keyof typeof en, string> = {
   // ---- 차단 / 확인 ----
   'rule.protected': '{name}{은는} 보호된 파일입니다. {reason}',
+  'rule.lockedByHand': '사람이 직접 잠갔습니다.',
   'rule.featureLocked': '{name}{은는} 잠겨 있습니다. {reason}',
   'rule.featureExclusive': "이 파일은 '{id}' 전용입니다. 다른 기능 파일은 자유롭게 고칠 수 있습니다.",
   'rule.layerDenied': '{from} 에서 {to} 를 import 할 수 없습니다.',
@@ -193,7 +194,6 @@ export const ko: Record<keyof typeof en, string> = {
   'daemon.needFilePath': '잠글 파일 경로가 필요합니다 (받은 값: {got})',
   'daemon.outsideProject': '이 프로젝트 밖의 파일입니다: {path}',
   'daemon.noSuchFile': '그런 파일이 없습니다: {file}',
-  'daemon.manualLock': '수동 잠금',
   'daemon.contractBreak': "'{name}'{을를} 없애려 합니다{others}. {count}곳이 이 이름을 가져다 씁니다.",
   'daemon.contractOthers': ' 외 {count}개',
   'daemon.contractUsers': '쓰는 곳: {list}{more}',

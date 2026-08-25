@@ -8,6 +8,7 @@
 export const en = {
   // ---- 차단 / 확인 (훅이 돌려주는 말. 사람도 읽고 AI 도 읽는다) ----
   'rule.protected': '{name} is protected. {reason}',
+  'rule.lockedByHand': 'Locked by hand.',
   'rule.featureLocked': '{name} is locked. {reason}',
   'rule.featureExclusive': "This file belongs only to '{id}'. Files in other features are free to edit.",
   'rule.layerDenied': '{from} may not import {to}.',
@@ -191,7 +192,6 @@ export const en = {
   'daemon.needFilePath': 'A file path is required to lock (got: {got})',
   'daemon.outsideProject': 'That file is outside this project: {path}',
   'daemon.noSuchFile': 'No such file: {file}',
-  'daemon.manualLock': 'locked by hand',
   'daemon.contractBreak': "You are removing '{name}'{others}. {count} places use that name.",
   'daemon.contractOthers': ' and {count} more',
   'daemon.contractUsers': 'Used by: {list}{more}',

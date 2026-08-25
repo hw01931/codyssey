@@ -268,7 +268,14 @@ export class Daemon {
     }
 
     this.rules.protect = this.rules.protect.filter(p => p.path !== rel)
-    if (locked) this.rules.protect.push({ path: rel, reason: reason?.trim() || t('daemon.manualLock') })
+    // 사유를 안 주면 아무것도 안 적는다. 우리가 만든 문구를 파일에 넣으면
+    // 그 시점의 말로 얼어붙어서, 나중에 말을 바꿔도 안 따라온다.
+    // 실제로 "App.jsx is protected. 수동 잠금" 이 나왔다.
+    // 사람이 적은 사유는 그 사람의 말이므로 손대지 않는다.
+    if (locked) {
+      const written = reason?.trim()
+      this.rules.protect.push(written ? { path: rel, reason: written } : { path: rel })
+    }
     this.rules.protect.sort((a, b) => (a.path < b.path ? -1 : 1))
     this.saveRules()
     return { ok: true }

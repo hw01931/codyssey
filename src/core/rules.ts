@@ -111,7 +111,9 @@ export function checkEdit(
     return {
       action: 'block',
       rule: `protect: ${p.path}`,
-      reason: `${t('rule.protected', { name: say.file(file), reason: p.reason ?? '' })}`.trim(),
+      // 사유가 없으면 지금 쓰는 말의 기본 문구를 붙인다. 파일에 박아두면
+      // 그때의 말로 얼어붙기 때문에, 보여줄 때 정한다.
+      reason: t('rule.protected', { name: say.file(file), reason: p.reason ?? t('rule.lockedByHand') }).trim(),
       hint: nextStep(graph, features, file, say),
     }
   }
