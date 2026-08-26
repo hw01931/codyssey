@@ -2,6 +2,7 @@ import path from 'node:path'
 import type { Node } from 'web-tree-sitter'
 import { emptyParse, type LangAdapter, type ParseResult, type ResolveCtx, type RouteDecl } from '../core/ir.ts'
 import { captures, extractSymbols, getQuery, parseSource } from '../index/parser.ts'
+import { fileDoc } from '../core/doc.ts'
 
 const EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
 const RESOLVE_EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
@@ -79,7 +80,9 @@ export const tsAdapter: LangAdapter = {
       })
     }
 
-    out.symbols = await extractSymbols(grammar, root)
+    out.symbols = await extractSymbols(grammar, root, src)
+    out.lines = src.split(String.fromCharCode(10)).length
+    out.doc = fileDoc(src.split(String.fromCharCode(10)))
 
     // 같은 파일 안에서 서로 부르는 관계. 파일이 하나뿐인 프로젝트에서는
     // 이것만이 유일한 구조 정보다.

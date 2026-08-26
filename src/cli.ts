@@ -13,6 +13,7 @@ import { archDiff, renderDiff, shouldFail } from './setup/archdiff.ts'
 import { architectureMd, terminalMap, type ReportInput } from './render/report.ts'
 import { Daemon as _D } from './daemon/server.ts'
 import { setLang, resolveLang, t } from './i18n/index.ts'
+import { width, pad } from './core/text.ts'
 
 const [, , cmd = 'help', ...rest] = process.argv
 
@@ -54,21 +55,6 @@ switch (cmd) {
   default: help()
 }
 
-/**
- * 터미널에서 차지하는 칸 수. 한글·한자·가나는 두 칸이다.
- * 이걸 안 세면 말을 바꿨을 때 도움말 정렬이 어긋난다.
- */
-function width(s: string): number {
-  let n = 0
-  for (const ch of s) {
-    const c = ch.codePointAt(0) ?? 0
-    n += (c >= 0x1100 && c <= 0x115f) || (c >= 0x2e80 && c <= 0xa4cf) || (c >= 0xac00 && c <= 0xd7a3) ||
-         (c >= 0xf900 && c <= 0xfaff) || (c >= 0xfe30 && c <= 0xfe6f) || (c >= 0xff00 && c <= 0xff60) ||
-         (c >= 0xffe0 && c <= 0xffe6) ? 2 : 1
-  }
-  return n
-}
-
 function help() {
   // 말마다 명령 이름 길이가 달라지므로 폭을 고정하지 않고 그때그때 맞춘다.
   // 색을 입히기 전에 맞춰야 한다 - ANSI 코드는 칸을 차지하지 않는데 길이에는 잡힌다.
@@ -92,7 +78,6 @@ function help() {
     ['--lang <en|ko>', t('cli.opt.lang')],
     ['--foreground', t('cli.opt.foreground')],
   ]
-  const pad = (s: string, to: number) => s + ' '.repeat(Math.max(0, to - width(s)))
   const w = (rows: Array<[string, ...unknown[]]>) => Math.max(...rows.map(r => width(r[0]))) + 3
 
   const cw = w(cmds)

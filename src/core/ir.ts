@@ -3,7 +3,21 @@
 /** P4: 확신 없는 엣지로는 절대 차단하지 않는다. */
 export type Confidence = 'high' | 'low'
 
-export interface Sym { name: string; kind: string; line: number }
+export interface Sym {
+  name: string
+  kind: string
+  line: number
+  /** 정의가 끝나는 줄. 크기(몇 줄짜리인지)를 재는 데 쓴다. */
+  endLine?: number
+  /**
+   * 정의 위(파이썬은 아래) 주석에서 뽑은 설명 한 줄.
+   *
+   * 이름이 아니라 **설명**이다. 이름 자리에 넣으면 안 된다 - 파일 머리주석이
+   * 차단 메시지의 이름이 되면 지금보다 나빠진다. 사람이 상세를 열었을 때
+   * '이게 뭐 하는 건지' 를 보여주는 용도다.
+   */
+  doc?: string
+}
 
 /**
  * 한 심볼이 다른 심볼을 부르는 것.
@@ -60,6 +74,10 @@ export interface HttpCall {
 
 export interface ParseResult {
   symbols: Sym[]
+  /** 파일 줄 수. 한 파일에 몰아넣은 프로젝트에서 어디가 비대한지 보는 데 쓴다. */
+  lines?: number
+  /** 파일 맨 앞 주석에서 뽑은 설명 한 줄 */
+  doc?: string
   /** 같은 파일 안 또는 import 한 이름을 부르는 관계 */
   calls: CallRef[]
   imports: ImportRef[]

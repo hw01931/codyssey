@@ -2,6 +2,7 @@ import path from 'node:path'
 import type { Node } from 'web-tree-sitter'
 import { emptyParse, type LangAdapter, type ParseResult, type ResolveCtx } from '../core/ir.ts'
 import { captures, extractSymbols, getQuery, parseSource } from '../index/parser.ts'
+import { fileDoc } from '../core/doc.ts'
 
 const G = 'python'
 const HTTP_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head', 'options'])
@@ -109,7 +110,9 @@ export const pyAdapter: LangAdapter = {
       })
     }
 
-    out.symbols = await extractSymbols(G, root)
+    out.symbols = await extractSymbols(G, root, src, { python: true })
+    out.lines = src.split(String.fromCharCode(10)).length
+    out.doc = fileDoc(src.split(String.fromCharCode(10)))
 
     const own = new Set(out.symbols.map(s => s.name))
     const imported = new Set(Object.keys(out.bindings))

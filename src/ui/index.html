@@ -109,7 +109,16 @@
   .segbtn + .segbtn { border-left: 1px solid var(--line); }
   .segbtn.on { background: var(--accent); color: #fff; }
   .toggle { font-size: 12px; color: var(--fg2); display: flex; align-items: center; gap: 5px; cursor: pointer; }
-  /* 첫 화면 */
+  /* 파일 속 */
+.sym { margin: 8px 0 }
+.sym-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline }
+.sym-name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.sym-len { font-size: 11px; opacity: .6; flex: none }
+.sym-bar { height: 4px; background: var(--bg3); border-radius: 2px; margin: 3px 0 2px; overflow: hidden }
+.sym-bar i { display: block; height: 100%; background: var(--accent) }
+.sym-sub { font-size: 10px; opacity: .5; font-family: ui-monospace, monospace }
+
+/* 첫 화면 */
   .home { padding: 18px; border-bottom: 1px solid var(--line); background: var(--bg2); }
   .home.hidden { display: none; }
   .home h1 { font-size: 17px; margin: 0 0 4px; font-weight: 700; }
@@ -784,6 +793,12 @@ function renderDetail() {
       </div>
       ${suggestion ? `<p class="hint" style="margin:9px 0 0">${T('ui.sharedHint')}</p>` : ''}
     </div>
+    <div class="card" id="inside">
+      <h2>${T('ui.inside')}</h2>
+      <p class="hint">${T('ui.linesCount', { count: n.lines ?? 0 })} · ${T('ui.symbolsCount', { count: n.symbols ?? 0 })}</p>
+      ${n.doc ? `<p class="hint" style="margin-top:6px">${esc(n.doc)}</p>` : ''}
+      <div id="inside-list"></div>
+    </div>
     <div class="card">
       <h2>${T('ui.usedBy', { count: usedBy.length })}</h2>
       ${usedBy.length ? usedBy.map(f => `<div class="path">${esc(f)}</div>`).join('') : `<p class="empty">${T('ui.none')}</p>`}
@@ -792,7 +807,60 @@ function renderDetail() {
       <h2>${T('ui.uses', { count: uses.length })}</h2>
       ${uses.length ? uses.map(f => `<div class="path">${esc(f)}</div>`).join('') : `<p class="empty">${T('ui.none')}</p>`}
     </div>`
+
+  void fillInside(selected)
 }
+
+/**
+ * 파일 하나의 속.
+ *
+ * 한 파일에 몰아넣은 프로젝트에서는 '파일' 이 단위로 쓸모가 없다. 화면 여섯 개가
+ * 한 파일에 있으면 파일이 1개라 아무것도 안 보인다. 안에 뭐가 몇 줄로 들어 있는지를
+ * 봐야 '어디가 비대한지' 가 드러난다.
+ *
+ * 전부 /api/state 로 받으면 큰 레포에서 응답이 통째로 무거워진다. 누른 것만 가져온다.
+ */
+async function fillInside(file) {
+  const box = $('#inside-list')
+  if (!box) return
+  let d
+  try {
+    const res = await fetch('/api/file?path=' + encodeURIComponent(file))
+    if (!res.ok) throw new Error(String(res.status))
+    d = await res.json()
+  } catch {
+    // 못 가져와도 상세 나머지는 그대로 보여준다 (P5)
+    box.innerHTML = ''
+    return
+  }
+  // 기다리는 사이에 다른 상자를 눌렀으면 버린다
+  if (file !== selected) return
+  const list = d.symbols ?? []
+  if (!list.length) {
+    box.innerHTML = `<p class="empty">${T('ui.insideEmpty')}</p>`
+    return
+  }
+  const shown = list.slice(0, 12)
+  // 제일 큰 것 대비 몇 %인지로 막대를 그린다. 절대 줄 수는 옆에 숫자로 있다.
+  const biggest = Math.max(1, ...shown.map(sizeOf))
+  box.innerHTML =
+    shown
+      .map(x => {
+        const n = sizeOf(x)
+        const pct = Math.round((100 * n) / biggest)
+        return `<div class="sym">
+          <div class="sym-head">
+            <span class="sym-name">${esc(x.doc || x.name)}</span>
+            <span class="sym-len">${T('ui.symbolLines', { count: n })}</span>
+          </div>
+          <div class="sym-bar"><i style="width:${pct}%"></i></div>
+          ${x.doc ? `<div class="sym-sub">${esc(x.name)} · ${x.line}-${x.endLine}</div>` : `<div class="sym-sub">${x.line}-${x.endLine}</div>`}
+        </div>`
+      })
+      .join('') + (list.length > shown.length ? `<p class="hint">${T('ui.insideMore', { count: list.length - shown.length })}</p>` : '')
+}
+
+const sizeOf = x => Math.max(1, (x.endLine ?? x.line) - x.line + 1)
 
 // ---------------------------------------------------------------- 이벤트
 

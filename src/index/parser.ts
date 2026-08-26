@@ -2,6 +2,8 @@ import { Parser, Language, Query } from 'web-tree-sitter'
 import type { Node } from 'web-tree-sitter'
 import fs from 'node:fs'
 import { getWasmPath, getQueryPath } from 'tree-sitter-wasm'
+import { docAt, type DocOptions } from '../core/doc.ts'
+import type { Sym } from '../core/ir.ts'
 
 let inited = false
 const langs = new Map<string, Language>()
@@ -89,16 +91,31 @@ export function captures(q: Query, root: Node): Record<string, Node>[] {
  * tags.scm 은 (@name = 이름 노드, @definition.<kind> = 정의 노드) 형태로 캡처한다.
  * github 스타일(@name.definition.x)이 아니라 nvim 스타일이라 이렇게 읽어야 한다.
  */
-export async function extractSymbols(grammar: string, root: Node) {
+/**
+ * 이 파일이 정의하는 심볼들.
+ *
+ * `src` 를 받으면 정의가 끝나는 줄과 주석에서 뽑은 설명까지 채운다.
+ * 안 주면 예전처럼 이름·종류·줄만 낸다 - 부르는 쪽이 소스를 안 들고 있을 수 있다.
+ */
+export async function extractSymbols(grammar: string, root: Node, src?: string, opts: DocOptions = {}) {
   const q = await getTagsQuery(grammar)
   if (!q) return []
-  const out: { name: string; kind: string; line: number }[] = []
+  const lines = src?.split(String.fromCharCode(10))
+  const out: Sym[] = []
   for (const m of captures(q, root)) {
     const nameNode = m['name']
     if (!nameNode) continue
     const defKey = Object.keys(m).find(k => k.startsWith('definition.'))
     if (!defKey) continue
-    out.push({ name: nameNode.text, kind: defKey.slice('definition.'.length), line: nameNode.startPosition.row + 1 })
+    const defNode = m[defKey]
+    const line = nameNode.startPosition.row + 1
+    const sym: Sym = { name: nameNode.text, kind: defKey.slice('definition.'.length), line }
+    if (defNode) sym.endLine = defNode.endPosition.row + 1
+    if (lines) {
+      const d = docAt(lines, line, opts)
+      if (d) sym.doc = d
+    }
+    out.push(sym)
   }
   return out
 }

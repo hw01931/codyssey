@@ -357,6 +357,15 @@ export const en = {
   'ui.confirmAll': 'This protects {count} files. The AI will ask first before editing them.',
   'ui.lockReasonShared': 'shared by several screens',
 
+  // ---- 웹 화면: 파일 속 ----
+  'ui.inside': 'Inside this file',
+  'ui.linesCount': '{count} lines',
+  'ui.symbolsCount': '{count} definitions',
+  'ui.symbolLines': '{count} lines',
+  'ui.insideEmpty': 'Nothing was picked up in this file.',
+  'ui.insideMore': '... and {count} more',
+  'ui.big': 'big',
+
   // ---- 일반 ----
   'common.and': 'and',
   'common.none': 'none',

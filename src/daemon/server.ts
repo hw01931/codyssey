@@ -507,6 +507,10 @@ export class Daemon {
         module: this.modules.of.get(n.id) ?? '',
         moduleLabel: this.say.module(this.modules.of.get(n.id) ?? ''),
         symbols: n.symbols.length,
+        // 줄 수와 설명은 구조가 아니라 구조에 붙는 메모다. 그래프는 순수하게
+        // 두고(P3) 여기서 파일 정보에서 꺼내 붙인다.
+        lines: this.files.get(n.id)?.parsed.lines ?? 0,
+        doc: this.files.get(n.id)?.parsed.doc,
         locked: locked.has(n.id),
         isEntry: this.features.entries.some(e => e.file === n.id),
       })),
@@ -645,6 +649,35 @@ export class Daemon {
       }
 
       if (url.pathname === '/api/state') return send(200, this.state())
+
+      /**
+       * 파일 하나의 속을 본다.
+       *
+       * 한 파일에 몰아넣은 프로젝트에서는 '파일' 이 단위로 쓸모가 없다.
+       * 화면 여섯 개가 한 파일에 있으면 어디가 비대한지, 그 안에 뭐가 있는지는
+       * 심볼 단위로 봐야 보인다.
+       *
+       * /api/state 에 다 실으면 400 파일짜리 레포에서 응답이 통째로 무거워진다.
+       * 사람이 상자를 눌렀을 때만 가져간다.
+       */
+      if (url.pathname === '/api/file') {
+        const want = url.searchParams.get('path')
+        if (!want) return send(400, { error: t('daemon.needFilePath', { got: 'null' }) })
+        const rel = this.toRel(path.resolve(this.repoRoot, want))
+        const info = rel.startsWith('../') ? undefined : this.files.get(rel)
+        if (!info) return send(404, { error: t('daemon.noSuchFile', { file: want }) })
+        const p = info.parsed
+        return send(200, {
+          id: rel,
+          label: this.say.file(rel),
+          lines: p.lines ?? 0,
+          doc: p.doc,
+          // 큰 것부터. 사람이 제일 먼저 볼 것은 제일 덩치 큰 덩어리다.
+          symbols: [...p.symbols]
+            .map(x => ({ name: x.name, kind: x.kind, line: x.line, endLine: x.endLine ?? x.line, doc: x.doc }))
+            .sort((a, b) => b.endLine - b.line - (a.endLine - a.line) || a.line - b.line),
+        })
+      }
 
       if (url.pathname === '/api/lock' && req.method === 'POST') {
         const body = await readJson(req)

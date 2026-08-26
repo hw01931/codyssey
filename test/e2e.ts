@@ -202,6 +202,35 @@ eq('git checkout 도 막는다', decision(await bash('git checkout -- api/servic
 
 ok('활동 기록에 남는다', (await daemonState()).activity.some((a: any) => a.tool === 'Bash' && a.action === 'block'))
 
+// ---------------------------------------------------------------- 파일 안
+console.log(String.fromCharCode(10) + '[파일 안에 뭐가 들어 있나]')
+// 한 파일에 몰아넣은 프로젝트에서는 '파일' 이 단위로 쓸모가 없다.
+// 어디가 비대한지, 그 안에 뭐가 있는지는 심볼 단위로 봐야 보인다.
+// 전부 /api/state 에 실으면 큰 레포에서 응답이 무거워지므로 따로 뗀다.
+{
+  const inside = (f: string) =>
+    fetch(`${BASE}/api/file?path=${encodeURIComponent(f)}`).then(async r => ({ status: r.status, body: (await r.json()) as any }))
+
+  const got = await inside('api/services/payment.py')
+  eq('200 을 준다', got.status, 200)
+  ok('줄 수를 준다', got.body.lines > 0, String(got.body.lines))
+  ok('심볼 목록을 준다', Array.isArray(got.body.symbols) && got.body.symbols.length > 0, JSON.stringify(got.body.symbols?.slice(0, 2)))
+  ok(
+    '심볼마다 줄 범위가 있다',
+    got.body.symbols.every((x: any) => x.line > 0 && (x.endLine ?? x.line) >= x.line),
+    JSON.stringify(got.body.symbols[0]),
+  )
+  ok('큰 것부터 준다', got.body.symbols.every((x: any, i: number, a: any[]) => i === 0 || size(a[i - 1]) >= size(x)))
+
+  eq('없는 파일은 404', (await inside('nope/nope.ts')).status, 404)
+  eq('프로젝트 밖은 404', (await inside('../outside.ts')).status, 404)
+  eq('경로가 없으면 400', (await fetch(`${BASE}/api/file`)).status, 400)
+}
+
+function size(x: any) {
+  return (x.endLine ?? x.line) - x.line
+}
+
 // 여기부터가 반대쪽이다. 셸을 통째로 막으면 하루 만에 제거당한다. (D9)
 console.log('\n[Bash 는 필요 이상으로 막지 않는다]')
 eq('읽기는 통과', decision(await bash('cat api/services/payment.py')), 'allow')

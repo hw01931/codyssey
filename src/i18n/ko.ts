@@ -359,6 +359,15 @@ export const ko: Record<keyof typeof en, string> = {
   'ui.confirmAll': '파일 {count}개를 지킵니다. AI 가 이 파일들을 고치려 하면 먼저 물어봅니다.',
   'ui.lockReasonShared': '여러 화면이 함께 쓰는 파일',
 
+  // ---- 웹 화면: 파일 속 ----
+  'ui.inside': '이 파일 안에',
+  'ui.linesCount': '{count}줄',
+  'ui.symbolsCount': '정의 {count}개',
+  'ui.symbolLines': '{count}줄',
+  'ui.insideEmpty': '이 파일에서는 아무것도 못 읽었습니다.',
+  'ui.insideMore': '... 외 {count}개',
+  'ui.big': '큼',
+
   // ---- 일반 ----
   'common.and': '외',
   'common.none': '없음',
