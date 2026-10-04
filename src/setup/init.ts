@@ -362,10 +362,14 @@ function installGitHook(root: string): 'wrote' | string | null {
 
 function ensureGitignore(root: string): boolean {
   const p = path.join(root, '.gitignore')
-  const line = '.codyssey/graph.json'
+  // graph.json 과 verified.json 은 생성물이다. 돌릴 때마다 바뀌어서 커밋하면 diff 노이즈다.
+  const lines = ['.codyssey/graph.json', '.codyssey/verified.json']
   const cur = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : ''
-  if (cur.split(/\r?\n/).some(l => l.trim() === line)) return false
-  fs.writeFileSync(p, (cur && !cur.endsWith('\n') ? cur + '\n' : cur) + `\n${t('init.gitignoreNote')}\n${line}\n`)
+  const have = new Set(cur.split(/\r?\n/).map(l => l.trim()))
+  const missing = lines.filter(l => !have.has(l))
+  if (!missing.length) return false
+  const header = have.has(lines[0]) ? '' : `\n${t('init.gitignoreNote')}\n`
+  fs.writeFileSync(p, (cur && !cur.endsWith('\n') ? cur + '\n' : cur) + header + missing.join('\n') + '\n')
   return true
 }
 

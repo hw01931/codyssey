@@ -138,10 +138,10 @@ export function detectRunner(repoRoot: string, testFile: string): Runner | null 
   if (deps.mocha && bin('mocha')) return { name: 'mocha', command: bin('mocha')!, args: [], cwd }
   // 이 저장소처럼 node 로 직접 돌리는 경우. 스크립트가 쓰는 플래그를 그대로 가져간다.
   if (/\bnode\b/.test(script)) {
+    // 스크립트가 쓰는 플래그만 그대로 가져간다. `--test` 를 멋대로 붙이면 node:test 가 아닌
+    // 보통 스크립트(이 저장소의 test/*.ts 처럼 직접 exit code 를 내는 것)가 전부 실패로 보인다.
     const flags = script.match(/--experimental-strip-types|--test|--import\S*|--loader\S*|--require\S*/g) ?? []
-    const uniq = [...new Set(flags)]
-    if (!uniq.includes('--test') && !/\.(test|spec)\./.test(testFile)) uniq.push('--test')
-    return { name: 'node', command: process.execPath, args: uniq, cwd }
+    return { name: 'node', command: process.execPath, args: [...new Set(flags)], cwd }
   }
   return null
 }
@@ -152,7 +152,10 @@ export function detectRunner(repoRoot: string, testFile: string): Runner | null 
 function safeEnv(): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {}
   for (const [k, v] of Object.entries(process.env)) {
-    if (/KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PRIVATE/i.test(k)) continue
+    // GIT_CONFIG_KEY_0 같은 건 비밀이 아니다. 이걸 지우면 짝인 GIT_CONFIG_VALUE_0 만 남아
+    // 자식 프로세스의 git 이 통째로 죽는다. 실제로 그래서 우리 테스트가 '실패' 로 보였다.
+    if (/^GIT_CONFIG_/.test(k)) { out[k] = v; continue }
+    if (/SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|PRIVATE_KEY|API_KEY|ACCESS_KEY|_KEY$|^KEY$/i.test(k)) continue
     out[k] = v
   }
   out.CI = '1'
