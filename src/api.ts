@@ -23,9 +23,10 @@ import { contractsOf, testsFor, type Contract } from './core/contract.ts'
 import { describeFeature, describeFile } from './core/labels.ts'
 import { archDiff, type ArchDiff } from './setup/archdiff.ts'
 import type { Recommendations, Recommendation, Reason, Skipped } from './core/recommend.ts'
+import type { VerifyRun, FeatureVerification, TestResult, TestStatus, VerifyOptions } from './core/verify.ts'
 import { setLang, type Lang } from './i18n/index.ts'
 
-export type { Verdict, Rules, Contract, ArchDiff, Recommendations, Recommendation, Reason, Skipped }
+export type { Verdict, Rules, Contract, ArchDiff, Recommendations, Recommendation, Reason, Skipped, VerifyRun, FeatureVerification, TestResult, TestStatus, VerifyOptions }
 
 export interface Feature {
   id: string
@@ -36,6 +37,8 @@ export interface Feature {
   file: string
   /** 이 기능이 닿는 파일 전부 */
   files: string[]
+  /** 우리가 돌려서 본 검증 상태. PASS 는 '그 커밋에서 그 테스트들이 통과' 라는 뜻이다 */
+  verification: FeatureVerification
 }
 
 export interface FileFacts {
@@ -108,13 +111,28 @@ export class Codyssey {
   // -------------------------------------------------------------- 읽기
 
   features(): Feature[] {
+    const verifs = this.d.verifications()
     return this.d.features.roots.map(e => ({
       id: e.id,
       kind: e.kind,
       label: describeFeature(e.id, this.d.labels),
       file: e.file,
       files: [...(this.d.features.members.get(e.id) ?? [])].sort(),
+      verification: verifs.find(v => v.feature === e.id)!,
     }))
+  }
+
+  /**
+   * 고친 파일들을 검증하는 테스트를 직접 돌리고 결과를 적는다. 모델의 자기보고를 대신한다.
+   * files 가 없으면 전부. 결과의 PASS 는 '그 코드 상태에서 그 테스트들이 통과' 이지 '기능이 정상' 이 아니다.
+   */
+  verify(files: string[] = [], opts: VerifyOptions = {}) {
+    return this.d.verify(files, opts)
+  }
+
+  /** 기능별 검증 상태 (저장된 결과에서) */
+  verification(): FeatureVerification[] {
+    return this.d.verifications()
   }
 
   facts(file: string): FileFacts {

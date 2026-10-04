@@ -1,9 +1,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { Graph } from './graph.ts'
-import { autolockCandidates, isGenerated, type Features } from './features.ts'
+import { autolockCandidates, exclusiveOf, isGenerated, type Features } from './features.ts'
+import type { FeatureVerification } from './verify.ts'
 import { crossModuleShared, type Modules } from './modules.ts'
-import { contractsOf } from './contract.ts'
+import { contractsOf, testsFor } from './contract.ts'
 import { alternativesFor, shortList, type Rules, type Say } from './rules.ts'
 import { t } from '../i18n/index.ts'
 
@@ -27,7 +28,7 @@ import { t } from '../i18n/index.ts'
  */
 
 export type Level = 'ask' | 'block'
-export type ReasonKind = 'shared-features' | 'shared-modules' | 'contract' | 'secret'
+export type ReasonKind = 'shared-features' | 'shared-modules' | 'contract' | 'secret' | 'verified'
 
 export interface Reason {
   kind: ReasonKind
@@ -74,6 +75,8 @@ export interface RecommendInput {
   rules: Rules
   lockedFiles: Set<string>
   say: Say
+  /** 기능별 검증 상태. 있으면 '검증된 기능' 이 잠금 이유가 된다 */
+  verifications?: FeatureVerification[]
 }
 
 /** 비밀로 보이는 파일 이름. `.env.example` 은 비밀이 아니다. */
@@ -93,11 +96,12 @@ export function recommend(input: RecommendInput): Recommendations {
   }
 
   /** 추천에 넣을 수 있는 파일인가. 안 되면 '추천하지 않는 것' 에 이유를 적는다. */
-  const eligible = (file: string): boolean => {
+  const eligible = (file: string, { allowEmpty = false } = {}): boolean => {
     if (lockedFiles.has(file)) return skip(file, 'locked'), false
     if (isGenerated(file)) return skip(file, 'generated'), false
     if (entryFiles.has(file)) return skip(file, 'entry'), false
-    if ((graph.nodes.get(file)?.symbols.length ?? 0) === 0) return skip(file, 'empty'), false
+    // 테스트 파일은 정의가 없어도 (test() 호출만 있어도) 지킬 가치가 있다
+    if (!allowEmpty && (graph.nodes.get(file)?.symbols.length ?? 0) === 0) return skip(file, 'empty'), false
     return true
   }
 
@@ -154,7 +158,23 @@ export function recommend(input: RecommendInput): Recommendations {
     }
   }
 
-  // 4) 비밀 파일. 그래프에 없다 (코드가 아니다). 파일 이름으로만 본다.
+  // 4) 검증된 기능. 우리가 돌려서 통과한 테스트가 있는 기능의 전용 파일과 그 테스트.
+  //    새 프로젝트에서는 아무것도 없다. 기능이 검증될수록 쌓인다. '이미 동작하는 것' 만 지킨다.
+  for (const v of input.verifications ?? []) {
+    if (v.status !== 'PASS') continue
+    const short = v.commit ? v.commit.slice(0, 7) : ''
+    const text = t('rec.verified', { feature: say.feature(v.feature), tests: v.tests.length, commit: short ? ` @ ${short}` : '' })
+    for (const file of [...exclusiveOf(features, v.feature), ...v.tests]) {
+      if (!eligible(file, { allowEmpty: v.tests.includes(file) })) continue
+      const r = get(file)
+      if (r.reasons.some(x => x.kind === 'verified' && x.evidence.name === v.feature)) continue
+      r.reasons.push({ kind: 'verified', text, evidence: { name: v.feature, count: v.tests.length, list: v.tests } })
+      r.basis = t('rec.basis.verified')
+      r.score += 2 + v.tests.length
+    }
+  }
+
+  // 5) 비밀 파일. 그래프에 없다 (코드가 아니다). 파일 이름으로만 본다.
   for (const file of findSecrets(input.repoRoot)) {
     if (lockedFiles.has(file)) {
       skip(file, 'locked')
@@ -172,9 +192,19 @@ export function recommend(input: RecommendInput): Recommendations {
     })
   }
 
+  // 테스트가 하나도 없는 파일은 잠가도 '깨졌는지' 를 알 길이 없다. 그 사실을 적는다.
+  for (const r of recs.values()) {
+    if (r.level === 'ask' && !r.reasons.some(x => x.kind === 'verified') && !contractsOrTests(graph, r.file)) r.basis = t('rec.basis.noTests')
+  }
+
   const recommend = [...recs.values()].sort((a, b) => b.score - a.score || (a.file < b.file ? -1 : 1))
   skipped.sort((a, b) => (a.file < b.file ? -1 : 1))
   return { recommend, skipped }
+}
+
+/** 이 파일을 검증하는 테스트가 있는가 */
+function contractsOrTests(graph: Graph, file: string): boolean {
+  return testsFor(graph, file).length > 0
 }
 
 /** 루트와 두 단계 아래까지만 본다. 더 깊은 비밀 파일은 보통 설정이 아니라 데이터다. */

@@ -14,11 +14,12 @@ import { buildSymbolGraph, sharedSymbols, symbolImpact, type SymbolGraph } from 
 import type { Graph } from '../core/graph.ts'
 import type { ResolveCtx } from '../core/ir.ts'
 import { deltaBrief, promptBrief, sessionBrief, snapshotEdges, type CtxInput } from './context.ts'
-import { brokenContracts, contractsOf, duplicateNames, nameIndex, testsFor } from '../core/contract.ts'
+import { brokenContracts, contractsOf, duplicateNames, isTest, nameIndex, testsFor } from '../core/contract.ts'
 import { describeFeature, describeFile, describeModule, emptyLabels, loadLabels, saveLabels, unlabeled, type Labels } from '../core/labels.ts'
 import { t, setLang, resolveLang, getLang, uiStrings } from '../i18n/index.ts'
 import { syncNativeDeny } from '../setup/native.ts'
 import { recommend, type Recommendations } from '../core/recommend.ts'
+import { runTests, allVerifications, verificationOf, type VerifyRun, type FeatureVerification, type VerifyOptions } from '../core/verify.ts'
 
 /**
  * 웹 화면이 있는 곳.
@@ -522,7 +523,32 @@ export class Daemon {
       rules: this.rules,
       lockedFiles: this.lockedFiles(),
       say: this.say,
+      verifications: this.verifications(),
     })
+  }
+
+  /** 기능별 검증 상태. 우리가 돌려서 본 결과만 근거다. */
+  verifications(): FeatureVerification[] {
+    return allVerifications(this.repoRoot, this.graph, this.features)
+  }
+
+  /**
+   * 고친 파일들을 검증하는 테스트를 우리가 직접 돌리고 결과를 적는다.
+   * files 가 비어 있으면 그래프에 있는 테스트 전부.
+   * 돌린 테스트는 모든 세션의 '아직 안 돌린 목록' 에서 지운다 - 실제로 돌았으니까.
+   */
+  async verify(files: string[] = [], opts: VerifyOptions = {}): Promise<{ run: VerifyRun; features: FeatureVerification[] }> {
+    const rels = files.map(f => this.toRel(f))
+    const tests = rels.length
+      ? [...new Set(rels.flatMap(r => testsFor(this.graph, r)))]
+      : [...this.graph.nodes.keys()].filter(isTest)
+    const run = await runTests(this.repoRoot, tests, opts)
+    for (const pending of this.pendingTests.values()) for (const r of run.results) if (r.status !== 'NOT_RUN') pending.delete(r.file)
+    for (const [session, pending] of this.pendingTests) if (!pending.size) this.nudged.delete(session)
+    // 영향받은 기능만 돌려준다
+    const touched = new Set(rels.length ? rels.flatMap(r => featuresOf(this.features, r)) : this.features.roots.map(r => r.id))
+    const features = [...touched].sort().map(id => verificationOf(this.repoRoot, this.graph, this.features, id))
+    return { run, features }
   }
 
   /** 잠긴 파일 전체 (명시 잠금 + 기능 잠금) */
@@ -578,6 +604,7 @@ export class Daemon {
   // -------------------------------------------------------------- 상태
 
   state() {
+    const verifs = this.verifications()
     const recs = this.recommendations()
     const byFile = new Map(recs.recommend.map(r => [r.file, r]))
     /** 화면 카드에 붙일 이유·효과. 추천에 없는 파일(생성·빈 파일)은 빠진 이유를 준다. */
@@ -602,6 +629,7 @@ export class Daemon {
       },
       features: this.features.roots.map(r => {
         const fr = (this.rules.features ?? []).find(f => f.id === r.id)
+        const v = verifs.find(x => x.feature === r.id)
         return {
           id: r.id,
           label: this.say.feature(r.id),
@@ -611,6 +639,7 @@ export class Daemon {
           exclusive: exclusiveOf(this.features, r.id).length,
           locked: Boolean(fr),
           scope: fr?.scope ?? 'exclusive',
+          verification: v ? { status: v.status, tests: v.tests.length, failing: v.failing.length, at: v.at ?? null, commit: v.commit ?? null, dirty: v.dirty ?? null } : null,
         }
       }),
       nodes: [...this.graph.nodes.values()].map(n => ({
@@ -794,7 +823,7 @@ export class Daemon {
           reason: `[codyssey] ${t('daemon.stopTests', {
             list: pending.slice(0, 5).join(', '),
             more: pending.length > 5 ? t('daemon.contractOthers', { count: pending.length - 5 }) : '',
-          })}`,
+          })} ${t('daemon.stopTestsHint')}`,
         })
       }
 
@@ -876,6 +905,12 @@ export class Daemon {
         send(200, { ok: true })
         setTimeout(() => void this.stop().then(() => process.exit(0)), 50)
         return
+      }
+
+      if (url.pathname === '/api/verify' && req.method === 'POST') {
+        const body = await readJson(req)
+        const files = Array.isArray(body.files) ? body.files.map(String) : []
+        return send(200, await this.verify(files))
       }
 
       if (url.pathname === '/api/rescan' && req.method === 'POST') {

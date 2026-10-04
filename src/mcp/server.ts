@@ -194,6 +194,42 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
   )
 
   server.registerTool(
+    'verify',
+    {
+      title: 'Run the tests that cover these files',
+      description:
+        'Runs the test files that import the given files (or all tests) and records the result. ' +
+        'Use this after editing instead of reporting that you ran tests: the result is measured, not self-reported.',
+      inputSchema: {
+        files: z.array(z.string()).optional().describe('files you edited (repo-relative). Omit for all tests'),
+      },
+    },
+    async ({ files }) => {
+      // 테스트는 오래 걸릴 수 있다. 데몬 쪽 제한(파일당 2분)에 맞춘다.
+      await api('/health')
+      const res = await fetch(`http://127.0.0.1:${port}/api/verify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ files: files ?? [] }),
+        signal: AbortSignal.timeout(10 * 60_000),
+      })
+      const j: any = await res.json()
+      const L: string[] = [t('verify.title') + (j.run.commit ? ` ${String(j.run.commit).slice(0, 7)}${j.run.dirty ? ' ' + t('verify.dirty') : ''}` : '')]
+      if (!j.run.results.length) L.push('  ' + t('verify.nothing'))
+      for (const r of j.run.results) {
+        L.push(`  ${t(`verify.${r.status}` as any)}  ${r.file}${r.reason ? ` (${r.reason})` : ''}`)
+        if (r.status === 'FAIL' && r.output) L.push(...String(r.output).split('\n').slice(-15).map((x: string) => '      ' + x))
+      }
+      if (j.features.length) {
+        L.push('', t('verify.featuresTitle'))
+        for (const v of j.features) L.push(`  ${v.feature}  ${t(`verify.${v.status}` as any)}${v.tests.length ? `  (${t('verify.testsCount', { count: v.tests.length })})` : ''}`)
+      }
+      L.push('', t('verify.meaning'))
+      return text(L.join('\n'))
+    },
+  )
+
+  server.registerTool(
     'set_labels',
     {
       title: 'Save human-readable names',

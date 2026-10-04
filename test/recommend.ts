@@ -52,7 +52,8 @@ ok('이유에 근거값이 붙어 있다', !!money && money.reasons.some(x => (x
 ok("밖에 약속한 이름('formatMoney')도 이유가 된다", !!money && money.reasons.some(x => x.kind === 'contract' && x.evidence.name === 'formatMoney'))
 eq('권장 수준은 승인', money?.level, 'ask')
 ok('잠그면 어떻게 되는지 말한다', !!money && money.effect.includes('확인'))
-ok('근거의 한계를 말한다', !!money && money.basis.includes('import'))
+// 이 픽스처의 money.ts 에는 테스트가 없다. 그러면 '잠가도 깨졌는지 알 길이 없다' 고 말해야 한다.
+ok('근거의 한계를 말한다 (테스트가 없으면 그 사실을)', !!money && money.basis.includes('테스트가 없습니다'))
 ok('대안 파일은 실제로 이 파일을 쓰는 곳이다', !!money && money.alternatives.every(a => cx.facts('web/lib/money.ts').importers.includes(a)), money?.alternatives.join(', '))
 
 console.log(`${NL}[비밀]`)

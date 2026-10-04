@@ -104,7 +104,7 @@ export class Graph {
   private walk(
     start: string,
     dir: 'in' | 'out',
-    { minConfidence, maxDepth = Infinity, gated = true }: WalkOpts,
+    { minConfidence, maxDepth = Infinity, gated = true, kinds }: WalkOpts,
   ): Set<string> {
     const scope = new Map<string, Set<string> | null>([[start, null]])
     let frontier = [start]
@@ -115,6 +115,7 @@ export class Graph {
         const curScope = scope.get(cur)
         for (const e of dir === 'out' ? this.out(cur) : this.in(cur)) {
           if (minConfidence === 'high' && e.confidence !== 'high') continue
+          if (kinds && !kinds.includes(e.kind)) continue
 
           let otherScope: Set<string> | null = null
           if (dir === 'out') {
@@ -163,6 +164,8 @@ interface WalkOpts {
   maxDepth?: number
   /** 기본 true. false 면 파일 단위 과대추정(안전하지만 넓음) */
   gated?: boolean
+  /** 이 종류의 연결만 따라간다. 생략하면 전부 */
+  kinds?: EdgeKind[]
 }
 
 /**

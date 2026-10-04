@@ -37,6 +37,7 @@ const C = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
   b: (s: string) => `\x1b[1m${s}\x1b[0m`,
   green: (s: string) => `\x1b[32m${s}\x1b[0m`,
+  red: (s: string) => `\x1b[31m${s}\x1b[0m`,
   yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
   blue: (s: string) => `\x1b[36m${s}\x1b[0m`,
 }
@@ -53,6 +54,7 @@ switch (cmd) {
   case 'scan': await cmdScan(); break
   case 'status': await cmdStatus(); break
   case 'impact': await cmdImpact(positional[0]); break
+  case 'verify': await cmdVerify(positional); break
   default: help()
 }
 
@@ -71,6 +73,7 @@ function help() {
     ['codyssey scan', t('cli.cmd.scan'), false],
     ['codyssey status', t('cli.cmd.status'), false],
     [`codyssey impact ${t('cli.arg.file')}`, t('cli.cmd.impact'), false],
+    [`codyssey verify ${t('cli.arg.files')}`, t('cli.cmd.verify'), true],
   ]
   const opts: Array<[string, string]> = [
     [`--root ${t('cli.arg.path')}`, t('cli.opt.root')],
@@ -306,8 +309,10 @@ async function cmdStatus() {
   const feat = d.features
 
   console.log(`\n${C.b(t('cli.status.features'))} ${C.dim(t('cli.status.featuresHint'))}`)
+  const verifs = d.verifications()
   for (const e of feat.roots) {
-    console.log(`  ${e.id.padEnd(26)} ${String(feat.members.get(e.id)!.size).padStart(3)} files   ${C.dim(e.file)}`)
+    const v = verifs.find(x => x.feature === e.id)
+    console.log(`  ${e.id.padEnd(26)} ${String(feat.members.get(e.id)!.size).padStart(3)} files   ${verifyTag(v)}  ${C.dim(e.file)}`)
   }
 
   // 잠금 추천. 숫자 하나가 아니라 무엇을·왜·잠그면 어떻게 되는지를 같이 말한다.
@@ -329,6 +334,38 @@ async function cmdStatus() {
   }
   console.log()
   await d.stop()
+}
+
+/** 검증 상태를 한 단어로. 색은 사실을 과장하지 않는다 - PASS 도 '테스트가 통과' 일 뿐이다. */
+function verifyTag(v?: { status: string; tests: string[] }) {
+  if (!v || !v.tests.length) return C.dim(t('verify.noTests'))
+  const word = t(`verify.${v.status}` as any)
+  return v.status === 'PASS' ? C.green(word) : v.status === 'FAIL' ? C.red(word) : C.yellow(word)
+}
+
+/**
+ * 테스트를 우리가 직접 돌린다. "돌렸습니다" 라는 말 대신 결과를 적는다.
+ * 파일을 주면 그 파일들을 검증하는 테스트만, 없으면 전부.
+ */
+async function cmdVerify(files: string[]) {
+  const d = new Daemon(root)
+  await d.start({ watch: false, listen: false })
+  const { run, features } = await d.verify(files)
+  console.log(`\n${C.b(t('verify.title'))} ${C.dim(run.commit ? `${run.commit.slice(0, 7)}${run.dirty ? ' ' + t('verify.dirty') : ''}` : t('verify.noGit'))}`)
+  if (!run.results.length) console.log('  ' + t('verify.nothing'))
+  for (const r of run.results) {
+    const word = t(`verify.${r.status}` as any)
+    const color = r.status === 'PASS' ? C.green : r.status === 'FAIL' ? C.red : C.yellow
+    console.log(`  ${color(word.padEnd(12))} ${r.file}${r.ms !== undefined ? C.dim(`  ${r.ms}ms`) : ''}${r.reason ? C.dim(`  (${r.reason})`) : ''}`)
+    if (r.status === 'FAIL' && r.output) for (const line of r.output.split('\n').slice(-12)) console.log(C.dim('      ' + line))
+  }
+  if (features.length) {
+    console.log(`\n${C.b(t('verify.featuresTitle'))}`)
+    for (const v of features) console.log(`  ${v.feature.padEnd(26)} ${verifyTag(v)}${v.tests.length ? C.dim(`  ${t('verify.testsCount', { count: v.tests.length })}`) : ''}`)
+  }
+  console.log(C.dim(`\n  ${t('verify.meaning')}`))
+  await d.stop()
+  if (run.results.some(r => r.status === 'FAIL')) process.exitCode = 1
 }
 
 async function cmdImpact(file?: string) {

@@ -181,6 +181,31 @@ writes from inside scripts, which no command-line parser can see.
 Informing adds **nothing when there is nothing to say**, and never repeats itself.
 A few hundred tokens on every edit is noise, not help.
 
+## "Verified" means we ran it
+
+"I ran the tests" is the agent's word. Codyssey can run them itself:
+
+```
+$ codyssey verify web/lib/money.ts
+Tests run by codyssey a1b2c3d
+  pass         web/__tests__/money.test.ts  412ms
+
+Feature status
+  PAGE /checkout             not run   2 tests     <- api.test.ts has not run yet
+```
+
+The agent gets the same through the `verify` MCP tool, and the Stop hook points to it.
+Results go to `.codyssey/verified.json` per test file, with the commit they ran on and
+whether the tree was dirty. A feature is **pass** only when every test that reaches it
+passed; one failing test makes it **FAIL**, one that could not run makes it
+**inconclusive**, and a runner that is missing is inconclusive, never a failure.
+
+Verified features become lock recommendations: "'Checkout' is verified (2 tests pass @ a1b2c3d).
+Keep it that way." New projects have nothing verified and nothing recommended on that
+basis; protection grows as features are proven.
+
+Tests run with a timeout and without environment variables that look like secrets.
+
 ## Use it as a library
 
 The hooks, the MCP server and the web view are shells around one engine. Another
@@ -238,6 +263,7 @@ codyssey doctor          check that everything is wired correctly
 codyssey status          print a summary in the terminal
 codyssey map             draw the structure in your terminal
 codyssey impact <file>   what breaks if I change this
+codyssey verify [files]  run the tests that cover these files, record the result
 codyssey diff <ref>      how the architecture changed since <ref>
 codyssey mcp             MCP server (6 tools for agents)
 codyssey stop            stop what is running in the background

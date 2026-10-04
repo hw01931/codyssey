@@ -175,7 +175,9 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
  * 고치고 나서 뭘 돌려야 하는지 알면 AI 가 스스로 검증 루프를 돈다.
  */
 export function testsFor(graph: Graph, file: string): string[] {
-  return [...graph.dependents(file)]
+  // import 만 따라간다. 프론트 테스트가 fetch 로 백엔드 라우트에 닿는다고 그 라우트를
+  // '검증' 하는 건 아니다. http 연결까지 따라가면 모든 백엔드 파일에 프론트 테스트가 붙는다.
+  return [...graph.dependents(file, { kinds: ['import'] })]
     .filter(f => f !== file && isTest(f))
     .sort()
 }
