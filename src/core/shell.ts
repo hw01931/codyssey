@@ -219,7 +219,9 @@ function analyzeSimple(toks: Tok[], acc: Acc, depth: number) {
     // 커밋 안 한 작업을 통째로 버리는 것들. 파일 하나가 아니라 작업 트리 전체다.
     if (sub === 'reset' && flags.includes('--hard')) acc.destructive.push({ what: 'git reset --hard', targets: [] })
     if (sub === 'clean' && flags.some(f => /^-[a-zA-Z]*f|^--force$/.test(f))) acc.destructive.push({ what: 'git clean -f', targets: [] })
-    if ((sub === 'checkout' || sub === 'restore') && flags.includes('.')) acc.destructive.push({ what: `git ${sub} .`, targets: [] })
+    // `git restore --staged .` 는 스테이지만 비운다. 작업물은 그대로다.
+    const stagedOnly = sub === 'restore' && (flags.includes('--staged') || flags.includes('-S')) && !flags.includes('--worktree') && !flags.includes('-W')
+    if ((sub === 'checkout' || sub === 'restore') && flags.includes('.') && !stagedOnly) acc.destructive.push({ what: `git ${sub} .`, targets: [] })
     return
   }
 

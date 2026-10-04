@@ -355,6 +355,9 @@ export class Daemon {
         return { action: 'ask', rule: t('daemon.destructiveRule'), reason: t('daemon.destructiveGit', { what: d.what }), hint: t('daemon.destructiveHint') }
       }
       const outside = d.targets.some(tg => {
+        // `rm -rf *`, `./*`, `.`, `$HOME` 은 경로로 풀면 프로젝트 안처럼 보이지만 통째로 지운다
+        const whole = /^(\.\/)?\*+$|^\.\/?$|^\$\{?HOME\}?(\/.*)?$|^\$\{?PWD\}?\/?$/.test(tg)
+        if (whole) return true
         const abs = tg === '~' || tg.startsWith('~/') ? path.join(os.homedir(), tg.slice(1)) : path.resolve(this.repoRoot, tg)
         const rel = path.relative(this.repoRoot, abs)
         return rel === '' || rel.startsWith('..') || path.isAbsolute(rel)
@@ -438,7 +441,9 @@ export class Daemon {
         worstFile = file
       }
     }
-    if (worst.action !== 'allow') {
+    // note 는 통과다. 여기서 끊으면 `sed -i shared.ts && python -c "...locked.ts..."` 에서
+    // 뒤쪽의 잠긴 파일 검사가 건너뛰어진다. note 는 들고 가되, 2) 를 끝까지 본다.
+    if (RANK[worst.action] > RANK.note) {
       this.log({ at: Date.now(), file: worstFile, action: worst.action, tool, reason: worst.reason, rule: worst.rule })
       return { ...worst, reason: `${worst.reason}\n${t('daemon.bashTouches', { file: worstFile })}` }
     }
@@ -466,6 +471,10 @@ export class Daemon {
         this.log({ at: Date.now(), file: hit[0], action: 'block', tool, reason: verdict.reason, rule: verdict.rule })
         return verdict
       }
+    }
+    if (worst.action === 'note') {
+      this.log({ at: Date.now(), file: worstFile, action: 'note', tool, reason: worst.reason, rule: worst.rule })
+      return worst
     }
 
     return { action: 'allow' }

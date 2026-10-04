@@ -173,7 +173,11 @@ function missingPaths(root: string, settingsPath: string): string[] {
     const s = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
     for (const g of s?.hooks?.SessionStart ?? []) {
       for (const hk of g.hooks ?? []) {
-        if (typeof hk.command === 'string' && /\bensure\b/.test(hk.command)) words.push(...hk.command.split(/\s+/))
+        // 따옴표 안의 공백을 지켜야 한다. "C:/Program Files/nodejs/node.exe" 를 공백으로 쪼개면
+        // 'C:/Program' 이 없는 경로로 잡혀서 같은 컴퓨터에서 '다시 init 하라' 고 한다.
+        if (typeof hk.command === 'string' && /\bensure\b/.test(hk.command)) {
+          for (const m of hk.command.matchAll(/"([^"]*)"|(\S+)/g)) words.push(m[1] ?? m[2])
+        }
       }
     }
   } catch {

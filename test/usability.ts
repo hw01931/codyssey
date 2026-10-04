@@ -14,7 +14,8 @@ import { scan } from '../src/index/scan.ts'
 import { computeFeatures, autolockCandidates, featuresOf, isGenerated } from '../src/core/features.ts'
 import { shortList } from '../src/core/rules.ts'
 import { commandFor, isMachineLocal } from '../src/setup/init.ts'
-import { setLang } from '../src/i18n/index.ts'
+import { setLang, t } from '../src/i18n/index.ts'
+import { doctor } from '../src/setup/doctor.ts'
 
 setLang('ko', true)
 
@@ -199,6 +200,12 @@ console.log(`${NL}[되돌릴 수 없는 명령]`)
   eq('프로젝트 자체를 지우는 것도', await decision(`rm -rf ${tmp}`), 'ask')
   eq('git reset --hard 는 묻는다', await decision('git reset --hard HEAD~1'), 'ask')
   eq('git clean -fd 도', await decision('git clean -fd'), 'ask')
+  // 코드 리뷰에서 나온 것들. 경로로 풀면 프로젝트 안처럼 보이지만 통째로 지우는 모양들.
+  eq('rm -rf * 는 묻는다', await decision('rm -rf *'), 'ask')
+  eq('rm -rf ./* 도', await decision('rm -rf ./*'), 'ask')
+  eq('rm -rf $HOME/ 도', await decision('rm -rf $HOME/'), 'ask')
+  eq('rm -rf . 도', await decision('rm -rf .'), 'ask')
+  eq('git restore --staged . 은 스테이지만 비우므로 묻지 않는다', await bash('git restore --staged .'), {})
   eq('프로젝트 안의 폴더를 지우는 건 묻지 않는다', await bash('rm -rf dist'), {})
   eq('rm 한 파일은 묻지 않는다', await bash('rm web/app/admin/page.tsx'), {})
   eq('git status 는 묻지 않는다', await bash('git status && git log --oneline'), {})
@@ -230,6 +237,29 @@ console.log(`${NL}[잠금이 Claude Code 설정에도 적힌다]`)
   const suggested = (/: (.+)$/m.exec(hint.split(NL).find(l => l.includes('쓰는 쪽')) ?? '')?.[1] ?? '').split(', ').filter(Boolean)
   const users = new Set(((daemon as any).graph.in('web/lib/money.ts') as { from: string }[]).map(e => e.from))
   ok('대안으로 제안하는 파일은 실제로 이 파일을 쓰는 곳이다', suggested.every(f => users.has(f)), suggested.join(', ') || '(제안 없음)')
+
+  // note(공유 파일) 가 앞에 있어도 뒤의 잠긴 파일 검사를 건너뛰면 안 된다.
+  // 리뷰에서 잡힌 것: `sed -i shared && python -c "...locked..."` 가 note 로 끝나고 있었다.
+  write(tmp, '.codyssey/rules.yaml', `protect:${NL}  - path: api/services/payment.py${NL}autolock: { minFeatures: 3, mode: note }${NL}`)
+  daemon.loadRules()
+  const sneaky = await post('/pre', { session_id: 'n', tool_name: 'Bash', tool_input: { command: `sed -i 's/a/b/' web/lib/money.ts && python -c "open('api/services/payment.py','w').write('')"` } })
+  eq('공유 파일 note 뒤에 숨은 잠긴 파일 쓰기는 막는다', sneaky.hookSpecificOutput?.permissionDecision, 'deny')
+  const noteOnly = await post('/pre', { session_id: 'n', tool_name: 'Bash', tool_input: { command: `sed -i 's/a/b/' web/lib/money.ts` } })
+  eq('공유 파일만 고치는 Bash 는 note 로 통과', noteOnly.hookSpecificOutput?.permissionDecision, undefined)
+  ok('그래도 모델에게는 알려준다', String(noteOnly.hookSpecificOutput?.additionalContext ?? '').includes('3'))
+}
+
+console.log(`${NL}[doctor 가 따옴표 경로를 제대로 읽는다]`)
+{
+  const dtmp = fs.mkdtempSync(path.join(os.tmpdir(), 'codyssey-doctor-'))
+  const nodeWithSpace = path.join(dtmp, 'Program Files', 'node')
+  fs.mkdirSync(path.dirname(nodeWithSpace), { recursive: true })
+  fs.writeFileSync(nodeWithSpace, '')
+  write(dtmp, '.claude/settings.json', JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: `"${nodeWithSpace}" cli.js ensure --root "\${CLAUDE_PROJECT_DIR}" --port 7000` }] }] } }))
+  write(dtmp, '.codyssey/rules.yaml', 'protect: []\n')
+  const checks = await doctor(dtmp)
+  ok('공백이 든 따옴표 경로를 없는 경로로 보지 않는다', !checks.some(ch => ch.label === t('doctor.missingPaths')), checks.filter(ch => !ch.ok).map(ch => ch.label).join(' / '))
+  fs.rmSync(dtmp, { recursive: true, force: true })
 }
 
 await daemon.stop()

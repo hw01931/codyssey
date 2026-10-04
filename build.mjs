@@ -44,13 +44,18 @@ for (const f of fs.readdirSync('src/ui')) {
 }
 
 // 타입 선언. esbuild 는 .d.ts 를 안 만든다. 기존 타입 오류가 있어도 선언은 나온다 (noEmitOnError 기본값 false).
+// npx 가 아니라 node 로 직접 부른다. 윈도우에서 execFileSync('npx') 는 ENOENT 다.
 import { execFileSync } from 'node:child_process'
 try {
-  execFileSync('npx', ['tsc', '-p', 'tsconfig.types.json'], { stdio: 'pipe' })
+  execFileSync(process.execPath, [path.join('node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.types.json'], { stdio: 'pipe' })
 } catch {
-  /* 타입 오류는 선언 생성을 막지 않는다. 파일이 나왔는지만 본다 */
+  /* 타입 오류는 선언 생성을 막지 않는다 (noEmitOnError 기본값 false). 파일이 나왔는지만 본다 */
 }
-if (!fs.existsSync('dist/types/api.d.ts')) console.warn('dist/types/api.d.ts 가 생성되지 않았다')
+if (!fs.existsSync('dist/types/api.d.ts')) {
+  // package.json 의 types 가 없는 파일을 가리킨 채 배포되면 안 된다. 여기서 멈춘다.
+  console.error('dist/types/api.d.ts 가 생성되지 않았다')
+  process.exit(1)
+}
 
 const size = fs.statSync('dist/cli.js').size
 console.log(`dist/cli.js  ${(size / 1024).toFixed(0)}KB`)
