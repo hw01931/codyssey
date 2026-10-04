@@ -9,6 +9,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { Daemon } from '../src/daemon/server.ts'
 import { contractsOf, brokenContracts, duplicateNames, nameIndex, testsFor } from '../src/core/contract.ts'
+import { setLang } from '../src/i18n/index.ts'
+
+// 한국어 문장을 확인한다. OS 로케일에 따라 결과가 바뀌면 안 된다.
+setLang('ko', true)
 
 const PORT = 7791
 const BASE = `http://127.0.0.1:${PORT}`
@@ -96,7 +100,7 @@ const removed = await edit(
   'export function formatMoney(cents: number): string {',
   'export function formatCents(cents: number): string {',
 )
-eq('이름을 바꾸면 확인을 요청한다', decision(removed), 'escalate')
+eq('이름을 바꾸면 확인을 요청한다', decision(removed), 'ask')
 ok('몇 곳이 쓰는지 말해준다', reason(removed).includes('3곳'), reason(removed))
 ok('어디서 쓰는지 알려준다', ctx(removed).includes('web/components/PriceRow.tsx'), ctx(removed))
 
@@ -115,7 +119,7 @@ console.log(`${NL}[파일을 통째로 새로 쓸 때]`)
 eq(
   '결과에 이름이 없으면 확인 요청',
   decision(await write('web/lib/money.ts', 'export function nothing() {}' + NL)),
-  'escalate',
+  'ask',
 )
 eq(
   '결과에 이름이 있으면 통과',

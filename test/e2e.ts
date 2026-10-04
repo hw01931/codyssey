@@ -12,7 +12,9 @@ import { setLang } from '../src/i18n/index.ts'
 
 // 이 테스트는 한국어 문장을 직접 확인한다. 기본값은 영어이므로 명시한다.
 // 말에 따라 결과가 달라지는 것 자체가 검사 대상이 아니다.
-setLang('ko')
+// 고정(explicit)해야 한다. 안 그러면 init/데몬이 OS 로케일을 다시 읽어서
+// LANG 이 없는 CI 나 영어 환경에서는 영어로 돌아가고 테스트가 깨진다.
+setLang('ko', true)
 
 const PORT = 7788
 const BASE = `http://127.0.0.1:${PORT}`
@@ -138,7 +140,7 @@ eq('같은 import 라도 페이지에서는 통과', decision(await pre('web/app
 console.log('\n[자동 잠금]')
 setRules('version: 1\nprotect: []\nlayers: []\nautolock: { minFeatures: 3, mode: ask }\n')
 const shared = await pre('web/lib/money.ts', 'export const x = 1')
-eq('공유 파일은 확인 요청', decision(shared), 'escalate')
+eq('공유 파일은 확인 요청', decision(shared), 'ask')
 // 코드를 모르는 사람이 읽는다. 'PAGE /admin' 이 아니라 '관리자 화면' 이어야 한다.
 ok('어느 화면이 같이 바뀌는지 사람 말로 알려준다', reason(shared).includes('관리자 화면'), reason(shared))
 ok('무엇을 할 수 있는지도 말해준다', ctxOf(shared).includes('잠금 풀어줘'), ctxOf(shared).split(String.fromCharCode(10))[0])
@@ -297,7 +299,7 @@ eq('패턴 밖의 새 파일은 통과', decision(await bash('echo x > api/route
 // 자동 잠금과 레이어 규칙도 Bash 에 그대로 걸려야 한다
 console.log('\n[Bash 에도 나머지 규칙이 걸린다]')
 setRules('version: 1\nprotect: []\nfeatures: []\nlayers: []\nautolock: { minFeatures: 3, mode: ask }\n')
-eq('공유 파일은 Bash 에서도 확인 요청', decision(await bash(`sed -i 's/a/b/' web/lib/money.ts`)), 'escalate')
+eq('공유 파일은 Bash 에서도 확인 요청', decision(await bash(`sed -i 's/a/b/' web/lib/money.ts`)), 'ask')
 
 setRules(`version: 1
 protect: []

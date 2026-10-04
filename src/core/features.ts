@@ -86,7 +86,16 @@ export function allFilesOf(features: Features, featureId: string): string[] {
  */
 export function autolockCandidates(features: Features, minFeatures = 3): { file: string; features: string[] }[] {
   return [...features.rootOwners.entries()]
-    .filter(([file, fs]) => fs.length >= minFeatures && !features.entries.some(e => e.file === file))
+    .filter(([file, fs]) => fs.length >= minFeatures && !isGenerated(file) && !features.entries.some(e => e.file === file))
     .map(([file, fs]) => ({ file, features: fs }))
     .sort((a, b) => b.features.length - a.features.length || (a.file < b.file ? -1 : 1))
+}
+
+/**
+ * 도구가 만들어낸 파일 (OpenAPI 클라이언트, protobuf, 라우트 트리 ...).
+ * 여러 기능이 같이 쓰지만 사람이 고치는 파일이 아니다. 잠금 후보에 넣으면
+ * FastAPI 풀스택 템플릿에서 후보 48개 중 16개가 이런 파일이었다. 그냥 소음이다.
+ */
+export function isGenerated(file: string): boolean {
+  return /\.(gen|generated)\.\w+$|_pb2(_grpc)?\.pyi?$|\.pb\.\w+$|(^|\/)(__generated__|generated)\//.test(file)
 }

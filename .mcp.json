@@ -1,10 +1,10 @@
 {
   "mcpServers": {
     "codyssey": {
-      "command": "C:\\Users\\Universe\\miniconda3\\node.exe",
+      "command": "node",
       "args": [
         "--experimental-strip-types",
-        "D:/workspace/CODYSSEY/src/cli.ts",
+        "${CLAUDE_PROJECT_DIR:-.}/src/cli.ts",
         "mcp",
         "--port",
         "7955"

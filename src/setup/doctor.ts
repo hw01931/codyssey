@@ -96,6 +96,14 @@ export async function doctor(repoRoot: string): Promise<Check[]> {
     }
   }
 
+  // 2-b) 훅과 MCP 가 부르는 실행 파일이 이 컴퓨터에 있는가.
+  //      다른 컴퓨터에서 init 한 설정을 커밋하면 그 컴퓨터의 절대 경로가 따라온다
+  //      (C:\\Users\\...\\node.exe). 그러면 데몬도 MCP 도 조용히 안 뜬다.
+  const missing = missingPaths(root, settingsPath)
+  if (missing.length) {
+    checks.push({ ok: false, label: t('doctor.missingPaths'), detail: missing.join(', '), fix: t('doctor.fixReinitSimple') })
+  }
+
   // 3) 규칙 파일
   const rulesPath = path.join(root, '.codyssey', 'rules.yaml')
   if (!fs.existsSync(rulesPath)) {
@@ -156,4 +164,33 @@ export async function doctor(repoRoot: string): Promise<Check[]> {
   }
 
   return checks
+}
+
+/** 우리 설정이 가리키는 절대 경로 중 이 컴퓨터에 없는 것 */
+function missingPaths(root: string, settingsPath: string): string[] {
+  const words: string[] = []
+  try {
+    const s = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
+    for (const g of s?.hooks?.SessionStart ?? []) {
+      for (const hk of g.hooks ?? []) {
+        if (typeof hk.command === 'string' && /\bensure\b/.test(hk.command)) words.push(...hk.command.split(/\s+/))
+      }
+    }
+  } catch {
+    /* 위에서 이미 보고했다 */
+  }
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(root, '.mcp.json'), 'utf8'))?.mcpServers?.codyssey
+    if (m) words.push(String(m.command ?? ''), ...(m.args ?? []).map(String))
+  } catch {
+    /* .mcp.json 은 없어도 된다 */
+  }
+  return [
+    ...new Set(
+      words
+        .map(w => w.replace(/^"|"$/g, ''))
+        .filter(w => !w.includes('${') && (path.isAbsolute(w) || /^[A-Za-z]:[\\/]/.test(w)))
+        .filter(w => !fs.existsSync(w)),
+    ),
+  ]
 }

@@ -57,7 +57,7 @@ tries to edit it:
 
 ```
 [codyssey] Payment core. Needs a human to approve changes.
-Files nearby you can edit instead: api/services/order.py
+If only one screen needs this change, make it in the file that uses it: api/routes/admin.py, api/routes/payments.py
 ```
 
 ## What it does

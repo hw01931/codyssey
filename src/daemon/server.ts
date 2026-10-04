@@ -67,6 +67,13 @@ export class Daemon {
   foreign = 0
   /** 세션마다 이미 알려준 것. 같은 말을 두 번 하면 토큰만 쓴다. */
   private told = new Map<string, Set<string>>()
+  /**
+   * 세션별로 '공유 파일이라 물어봤던 파일' 과 '사람이 허락해서 실제로 고친 파일'.
+   * 한 번 허락한 파일을 같은 세션에서 고칠 때마다 다시 물으면 사람은 결국 도구를 끈다 (D9).
+   * 사람이 건 잠금(block)과 이름 계약 확인은 여기에 해당하지 않는다. 매번 본다.
+   */
+  private asked = new Map<string, Set<string>>()
+  private approved = new Map<string, Set<string>>()
   private ctx!: ResolveCtx
   private server?: http.Server
   private watcher?: chokidar.FSWatcher
@@ -583,12 +590,19 @@ export class Daemon {
 
       if (url.pathname === '/pre' && req.method === 'POST') {
         const body = await readJson(req)
-        const verdict = this.decide(String(body.tool_name ?? ''), (body.tool_input ?? {}) as Record<string, unknown>)
+        const session = String(body.session_id ?? 'default')
+        const input = (body.tool_input ?? {}) as Record<string, unknown>
+        const verdict = this.decide(String(body.tool_name ?? ''), input)
         if (verdict.action === 'allow') return send(200, {}) // 조용히 통과 = 컨텍스트 0토큰
+        const rel = input.file_path ? this.toRel(String(input.file_path)) : ''
+        if (rel && verdict.action === 'ask' && verdict.rule?.startsWith('autolock')) {
+          if (this.approved.get(session)?.has(rel)) return send(200, {})
+          remember(this.asked, session, rel)
+        }
         return send(200, {
           hookSpecificOutput: {
             hookEventName: 'PreToolUse',
-            permissionDecision: verdict.action === 'block' ? 'deny' : 'escalate',
+            permissionDecision: verdict.action === 'block' ? 'deny' : 'ask',
             permissionDecisionReason: `[codyssey] ${verdict.reason}`,
             ...(verdict.hint ? { additionalContext: verdict.hint } : {}),
           },
@@ -627,6 +641,9 @@ export class Daemon {
             : [String(input.file_path ?? '')]
         const rels = touched.map(f => this.toRel(f)).filter(r => r && !r.startsWith('../') && adapterFor(r))
         if (!rels.length) return send(200, {})
+        // 물어본 파일이 실제로 고쳐졌다 = 사람이 허락했다. 이 세션에서는 다시 묻지 않는다.
+        const session = String(body.session_id ?? 'default')
+        for (const r of rels) if (this.asked.get(session)?.has(r)) remember(this.approved, session, r)
 
         const rel = rels[0]
         const before = snapshotEdges(this.graph, rel)
@@ -764,4 +781,10 @@ function readJson(req: http.IncomingMessage): Promise<Record<string, unknown>> {
       }
     })
   })
+}
+
+function remember(m: Map<string, Set<string>>, session: string, file: string) {
+  const set = m.get(session) ?? new Set<string>()
+  set.add(file)
+  m.set(session, set)
 }

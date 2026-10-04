@@ -19,7 +19,7 @@ export const en = {
   'rule.layerViolation': 'layer violation',
   'rule.sharedBy': 'shared by {count} features: {list}',
   'rule.unlockHint': 'To change it anyway, say: "codyssey, unlock {name}".',
-  'rule.freeNeighbours': 'Files nearby you can edit instead: {list}',
+  'rule.freeNeighbours': 'If only one screen needs this change, make it in the file that uses it: {list}',
 
   // ---- 계약 ----
   'contract.broken': '{name} is used by {count} other files. Removing or renaming it will break them.',
@@ -104,7 +104,8 @@ export const en = {
   'cli.opt.foreground': 'Keep the daemon in the foreground',
   // ---- init ----
   'cli.init.title': 'Setting up CODYSSEY...',
-  'cli.init.suggestions': '{count} [[file is|files are]] shared by several features - pick which to lock in the web view',
+  'cli.init.machineLocal': 'The hook and MCP settings point at a path on this computer only. Teammates and cloud sessions cannot use them - install codyssey in the project (npm i -D codyssey) and run init again.',
+  'cli.init.suggestions': '{count} [[file is|files are]] shared by several features - the AI will ask you before editing [[it|them]]. To lock one for good, pick it in the web view',
   'cli.init.doneWord': 'Setup complete.',
   'cli.init.importantWord': 'Important:',
   'cli.init.restartBold': 'restart Claude Code',
@@ -160,6 +161,7 @@ export const en = {
   'doctor.count': '{count}',
   'doctor.cantReadSettings': 'Cannot read .claude/settings.json',
   'doctor.fixJson': 'Check the JSON syntax',
+  'doctor.missingPaths': 'Hooks or MCP point at a file that is not on this computer (set up on another machine?)',
   'doctor.noRules': 'No rules.yaml',
   'doctor.rulesOk': 'Rules file looks right',
   'doctor.rulesCount': '{count} [[lock or rule|locks and rules]]',

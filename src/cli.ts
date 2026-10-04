@@ -4,6 +4,7 @@ import path from 'node:path'
 import { scan } from './index/scan.ts'
 import type { Graph } from './core/graph.ts'
 import { computeFeatures, autolockCandidates, featuresOf, allEntriesOf } from './core/features.ts'
+import { shortList } from './core/rules.ts'
 import { Daemon } from './daemon/server.ts'
 import { init, openBrowser, spawnDaemon } from './setup/init.ts'
 import { health, resolvePort, samePath, savePort } from './setup/port.ts'
@@ -107,6 +108,7 @@ async function cmdInit() {
   console.log()
   for (const w of r.wrote) console.log(`  ${C.green('+')} ${w}`)
   for (const s of r.skipped) console.log(`  ${C.dim('·')} ${C.dim(s)}`)
+  if (r.machineLocal) console.log(`\n${C.yellow('!')} ${t('cli.init.machineLocal')}`)
 
   console.log(`\n${C.green(t('cli.init.doneWord'))} ${t('init.done', { port: C.b(String(r.port)) })}`)
   console.log(`\n${C.yellow(t('cli.init.importantWord'))} ${t('cli.init.restartLine', { bold: C.b(t('cli.init.restartBold')) })}`)
@@ -308,7 +310,8 @@ async function cmdStatus() {
   const locks = autolockCandidates(feat, 3)
   if (locks.length) {
     console.log(`\n${C.b(t('cli.status.locks'))} ${C.dim(t('cli.status.locksHint'))}`)
-    for (const c of locks) console.log(`  ${c.file}\n      ${C.dim(c.features.join(', '))}`)
+    // 파일마다 기능 23개를 늘어놓으면 화면이 기능 이름으로 덮인다. 개수와 앞의 몇 개만.
+    for (const c of locks) console.log(`  ${c.file.padEnd(40)} ${C.dim(`${c.features.length} · ${shortList(c.features)}`)}`)
   }
 
   const cross = graph.edges.filter(e => e.kind === 'http')

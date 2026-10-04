@@ -15,6 +15,8 @@ export interface InitResult {
   files: number
   features: number
   suggestions: number
+  /** 설정에 이 컴퓨터 전용 절대 경로가 들어갔다. 커밋하면 다른 곳에서는 안 돈다. */
+  machineLocal: boolean
   wrote: string[]
   skipped: string[]
 }
@@ -57,7 +59,7 @@ export async function init(repoRoot: string, requestedPort?: number, requestedLa
 
   // 2) Claude Code 훅
   const settingsPath = path.join(root, '.claude', 'settings.json')
-  const changed = mergeHooks(settingsPath, port)
+  const changed = mergeHooks(settingsPath, root, port)
   if (changed) wrote.push(rel(root, settingsPath))
   else skipped.push(rel(root, settingsPath) + ' ' + t('init.alreadySet'))
 
@@ -79,6 +81,7 @@ export async function init(repoRoot: string, requestedPort?: number, requestedLa
     files: files.size,
     features: features.roots.length,
     suggestions: suggestions.length,
+    machineLocal: isMachineLocal(mcpEntry(root, port)),
     wrote,
     skipped,
   }
@@ -122,7 +125,7 @@ function renderRules(lang: Lang): string {
 }
 
 /** 기존 settings.json 을 건드리지 않고 우리 훅만 끼워 넣는다. */
-function mergeHooks(settingsPath: string, port: number): boolean {
+function mergeHooks(settingsPath: string, root: string, port: number): boolean {
   let settings: Record<string, any> = {}
   if (fs.existsSync(settingsPath)) {
     try {
@@ -151,7 +154,7 @@ function mergeHooks(settingsPath: string, port: number): boolean {
         continue
       }
       hasStarter = true
-      const next = starterCommand(port)
+      const next = starterCommand(root, port)
       if (h.command !== next) {
         h.command = next
         changed = true
@@ -168,7 +171,7 @@ function mergeHooks(settingsPath: string, port: number): boolean {
       hooks: [
         {
           type: 'command',
-          command: starterCommand(port),
+          command: starterCommand(root, port),
           async: true,
           timeout: 20,
           statusMessage: t('init.preparing'),
@@ -225,7 +228,7 @@ function mergeHooks(settingsPath: string, port: number): boolean {
 }
 
 /** 우리가 심은 데몬 기동 훅인가. 경로 대소문자에 걸리면 안 된다. */
-const isStarter = (cmd: string) => /codyssey/i.test(cmd) && /\bensure\b/.test(cmd)
+const isStarter = (cmd: string) => /\bensure\b/.test(cmd) && (/codyssey/i.test(cmd) || /\bensure --root\b/.test(cmd))
 
 /**
  * 지금 돌고 있는 CLI 의 실제 경로.
@@ -241,25 +244,57 @@ function selfEntry(): { path: string; isSource: boolean } | null {
   return { path: path.resolve(p), isSource: p.endsWith('.ts') }
 }
 
-/** 실행 명령을 만든다. 소스면 타입 스트립 플래그가 필요하고, 번들이면 그냥 실행한다. */
-function selfCommand(args: string[]): { command: string; args: string[] } {
-  const self = selfEntry()
-  if (!self) return { command: 'npx', args: ['-y', 'codyssey', ...args] }
-  return {
-    command: process.execPath,
-    args: self.isSource ? ['--experimental-strip-types', self.path, ...args] : [self.path, ...args],
-  }
+/**
+ * 실행 명령을 만든다. 소스면 타입 스트립 플래그가 필요하고, 번들이면 그냥 실행한다.
+ *
+ * 여기서 나온 명령은 .claude/settings.json 과 .mcp.json 에 들어가고, 이 두 파일은
+ * 보통 커밋된다. 예전에는 이 컴퓨터의 node 절대 경로와 CLI 절대 경로를 그대로 적었다.
+ * 그러면 팀원 컴퓨터, 클라우드 세션, 지워진 npx 캐시에서 훅과 MCP 가 전부 죽는다.
+ * (이 저장소의 .mcp.json 이 `C:\\Users\\...\\node.exe` 를 가리켜서 실제로 죽었다.)
+ *
+ * 그래서 어디서 실행됐는지에 따라 다르게 적는다.
+ *   프로젝트 안 (node_modules, 또는 이 저장소 자체)  ->  node <프로젝트 기준 경로>
+ *   npx 캐시                                     ->  npx -y codyssey
+ *   그 밖 (전역 설치, 다른 폴더의 개발본)            ->  절대 경로 (이 컴퓨터 전용)
+ *
+ * `projectDir` 는 설정 파일 종류마다 다르다. 훅은 셸이 `${CLAUDE_PROJECT_DIR}` 를 풀고,
+ * .mcp.json 은 Claude Code 가 `${VAR:-기본값}` 을 푼다.
+ */
+function selfCommand(args: string[], root: string, projectDir: string): { command: string; args: string[] } {
+  return commandFor(selfEntry(), args, root, projectDir)
 }
 
-const quoted = (s: string) => (/[\s"]/.test(s) ? `"${s.split(path.sep).join('/')}"` : s)
+/** selfCommand 의 순수한 부분. 테스트가 '어디서 실행됐는가' 를 바꿔가며 부른다. */
+export function commandFor(
+  self: { path: string; isSource: boolean } | null,
+  args: string[],
+  root: string,
+  projectDir: string,
+): { command: string; args: string[] } {
+  if (!self || /[\\/]_npx[\\/]/.test(self.path)) return { command: 'npx', args: ['-y', 'codyssey', ...args] }
+  const flags = self.isSource ? ['--experimental-strip-types'] : []
+  const inside = path.relative(root, self.path)
+  if (inside && !inside.startsWith('..') && !path.isAbsolute(inside)) {
+    return { command: 'node', args: [...flags, `${projectDir}/${inside.split(path.sep).join('/')}`, ...args] }
+  }
+  return { command: process.execPath, args: [...flags, self.path, ...args] }
+}
+
+/** 이 명령이 이 컴퓨터에서만 돌아가는가 (절대 경로를 품고 있는가) */
+export function isMachineLocal(cmd: { command: string; args: string[] }): boolean {
+  return [cmd.command, ...cmd.args].some(a => path.isAbsolute(a) || /^[A-Za-z]:[\\/]/.test(a))
+}
+
+/** 셸 인자 하나. `${CLAUDE_PROJECT_DIR}` 같은 변수는 큰따옴표 안에서도 풀린다. */
+const quoted = (s: string) => (/[\s"]/.test(s) || s.includes('${') ? `"${s.split(path.sep).join('/')}"` : s)
 
 /**
  * 훅에서 실행할 명령. 지금 돌고 있는 CLI 를 그대로 다시 부른다.
  * 이미 떠 있으면 아무것도 안 하고 즉시 끝난다.
  */
-function starterCommand(port: number): string {
+function starterCommand(root: string, port: number): string {
   const target = '"${CLAUDE_PROJECT_DIR}"'
-  const { command, args } = selfCommand(['ensure', '--root', '__TARGET__', '--port', String(port)])
+  const { command, args } = selfCommand(['ensure', '--root', '__TARGET__', '--port', String(port)], root, '${CLAUDE_PROJECT_DIR}')
   return [quoted(command), ...args.map(a => (a === '__TARGET__' ? target : quoted(a)))].join(' ')
 }
 
@@ -275,15 +310,15 @@ function registerMcp(root: string, port: number): boolean {
     }
   }
   cfg.mcpServers ??= {}
-  const entry = mcpEntry(port)
+  const entry = mcpEntry(root, port)
   if (JSON.stringify(cfg.mcpServers.codyssey) === JSON.stringify(entry)) return false
   cfg.mcpServers.codyssey = entry
   fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n')
   return true
 }
 
-function mcpEntry(port: number) {
-  return selfCommand(['mcp', '--port', String(port)])
+function mcpEntry(root: string, port: number) {
+  return selfCommand(['mcp', '--port', String(port)], root, '${CLAUDE_PROJECT_DIR:-.}')
 }
 
 /**
@@ -300,7 +335,8 @@ function installGitHook(root: string): 'wrote' | string | null {
     const cur = fs.readFileSync(p, 'utf8')
     return cur.includes('codyssey') ? t('init.alreadySet') : t('init.otherHook')
   }
-  const { command, args } = selfCommand(['scan'])
+  // git 훅은 저장소 루트에서 돈다. CLAUDE_PROJECT_DIR 는 없다.
+  const { command, args } = selfCommand(['scan'], root, '.')
   const cmd = [quoted(command), ...args.map(quoted)].join(' ')
   const script = [
     '#!/bin/sh',
@@ -338,7 +374,13 @@ export async function isAlive(port: number): Promise<boolean> {
  * SessionStart 훅에서 부르면 사용자가 아무것도 실행할 필요가 없다.
  */
 export function spawnDaemon(repoRoot: string, port: number) {
-  const { command, args } = selfCommand(['start', '--root', repoRoot, '--port', String(port), '--no-open'])
+  // 지금 바로 실행하는 명령이라 이 컴퓨터의 실제 경로를 쓴다 (설정 파일에 적히지 않는다)
+  const self = selfEntry()
+  const startArgs = ['start', '--root', repoRoot, '--port', String(port), '--no-open']
+  const { command, args } =
+    self && !/[\\/]_npx[\\/]/.test(self.path)
+      ? { command: process.execPath, args: [...(self.isSource ? ['--experimental-strip-types'] : []), self.path, ...startArgs] }
+      : { command: 'npx', args: ['-y', 'codyssey', ...startArgs] }
   const child = spawn(command, args, {
     detached: true,
     stdio: 'ignore',

@@ -4,6 +4,7 @@ import type { LangAdapter, ParseResult, ResolveCtx } from '../core/ir.ts'
 import { Graph } from '../core/graph.ts'
 import { tsAdapter } from '../adapters/ts.ts'
 import { pyAdapter } from '../adapters/py.ts'
+import { loadAliases } from './tsconfig.ts'
 
 const ADAPTERS: LangAdapter[] = [tsAdapter, pyAdapter]
 
@@ -324,18 +325,7 @@ function makeCtx(repoRoot: string): ResolveCtx {
     aliasesOf(projectRoot) {
       const cached = aliasCache.get(projectRoot)
       if (cached) return cached
-      let out: Record<string, string[]> = {}
-      for (const f of ['tsconfig.json', 'jsconfig.json']) {
-        const p = path.join(repoRoot, projectRoot, f)
-        if (!fs.existsSync(p)) continue
-        try {
-          const json = JSON.parse(fs.readFileSync(p, 'utf8').replace(/\/\/.*$/gm, '').replace(/,(\s*[}\]])/g, '$1'))
-          const paths = json?.compilerOptions?.paths
-          if (paths) out = paths
-        } catch {
-          /* tsconfig 가 깨져도 스캔은 계속된다 (P5) */
-        }
-      }
+      const out = loadAliases(path.join(repoRoot, projectRoot))
       aliasCache.set(projectRoot, out)
       return out
     },
@@ -345,6 +335,10 @@ function makeCtx(repoRoot: string): ResolveCtx {
 /** 외부 패키지인지, 풀었어야 하는 로컬 모듈인지 구분. 후자만 unresolved 로 기록. */
 function looksLocal(spec: string, f: FileInfo, files: Map<string, FileInfo>, ctx: ResolveCtx): boolean {
   if (f.adapter.name !== 'py') {
+    // `@/x`, `~/x`, `#/x` 는 npm 패키지 이름이 될 수 없다. 별칭 설정을 못 읽었어도
+    // 로컬 모듈인 건 확실하다. 이걸 '외부 패키지' 로 넘기면 해석률이 100% 로 나오면서
+    // 프론트 import 가 통째로 빠진 걸 아무도 모른다. 실제로 그랬다.
+    if (/^[@~#]\//.test(spec)) return true
     // 'paths': { '*': [...] } 처럼 접두어가 없는 별칭은 모든 패키지 이름과 매칭된다.
     // 그러면 외부 패키지가 전부 '못 푼 로컬 모듈'로 잡혀서 진단이 소음이 된다.
     return Object.keys(ctx.aliasesOf(f.projectRoot))

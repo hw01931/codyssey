@@ -55,7 +55,7 @@ CODYSSEY 설정 중...
 
 ```
 [codyssey] 결제 코어. 사람 승인 필요
-대신 고칠 수 있는 이웃 파일: api/services/order.py
+한 화면에만 필요한 변경이면 이 파일을 쓰는 쪽에서 고치세요: api/routes/admin.py, api/routes/payments.py
 ```
 
 ## 쓰는 말

@@ -21,7 +21,7 @@ export const ko: Record<keyof typeof en, string> = {
   'rule.layerViolation': '레이어 위반',
   'rule.sharedBy': '기능 {count}개가 공유: {list}',
   'rule.unlockHint': '그래도 바꾸려면 "codyssey 에서 {name} 잠금 풀어줘" 라고 말하세요.',
-  'rule.freeNeighbours': '대신 고칠 수 있는 이웃 파일: {list}',
+  'rule.freeNeighbours': '한 화면에만 필요한 변경이면 이 파일을 쓰는 쪽에서 고치세요: {list}',
 
   // ---- 계약 ----
   'contract.broken': '{name}{은는} 다른 파일 {count}곳이 씁니다. 지우거나 이름을 바꾸면 그곳들이 깨집니다.',
@@ -106,7 +106,8 @@ export const ko: Record<keyof typeof en, string> = {
   'cli.opt.foreground': 'init 이 데몬을 물고 있게 (기본은 백그라운드)',
   // ---- init ----
   'cli.init.title': 'CODYSSEY 설정 중...',
-  'cli.init.suggestions': '여러 기능이 함께 쓰는 파일 {count}개 - 잠글지 화면에서 골라주세요',
+  'cli.init.machineLocal': '훅과 MCP 설정이 이 컴퓨터에만 있는 경로를 가리킵니다. 팀원이나 클라우드 세션에서는 동작하지 않습니다. 프로젝트에 설치(npm i -D codyssey)한 뒤 init 을 다시 실행하세요.',
+  'cli.init.suggestions': '여러 기능이 함께 쓰는 파일 {count}개 - AI 가 고치기 전에 먼저 물어봅니다. 아예 잠그려면 화면에서 골라주세요',
   'cli.init.doneWord': '설정 완료.',
   'cli.init.importantWord': '중요:',
   'cli.init.restartBold': 'Claude Code 를 다시 시작',
@@ -162,6 +163,7 @@ export const ko: Record<keyof typeof en, string> = {
   'doctor.count': '{count}개',
   'doctor.cantReadSettings': '.claude/settings.json 을 읽을 수 없습니다',
   'doctor.fixJson': 'JSON 문법을 확인해 주세요',
+  'doctor.missingPaths': '훅이나 MCP 가 이 컴퓨터에 없는 파일을 가리킵니다 (다른 컴퓨터에서 설정했나요?)',
   'doctor.noRules': 'rules.yaml 이 없습니다',
   'doctor.rulesOk': '규칙 파일 정상',
   'doctor.rulesCount': '잠금/규칙 {count}건',

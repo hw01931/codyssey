@@ -1,0 +1,23 @@
+name: 테스트
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      # LANG 을 비워 둔다. OS 로케일에 따라 결과가 바뀌는 테스트가 있으면 여기서 잡힌다.
+      - run: npm test
+        env:
+          LANG: ''

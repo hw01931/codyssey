@@ -1,5 +1,5 @@
 import type { Graph } from './graph.ts'
-import { allFilesOf, autolockCandidates, exclusiveOf, featuresOf, type Features } from './features.ts'
+import { allFilesOf, autolockCandidates, exclusiveOf, featuresOf, isGenerated, type Features } from './features.ts'
 import { consumerModules, type Modules } from './modules.ts'
 import { t, setLang, type Lang } from '../i18n/index.ts'
 
@@ -154,16 +154,15 @@ export function checkEdit(
     }
   }
 
-  // 4) 자동 잠금
-  if (rules.autolock.mode !== 'off') {
+  // 4) 자동 잠금. 도구가 만든 파일은 사람이 고치는 파일이 아니라서 묻지 않는다.
+  if (rules.autolock.mode !== 'off' && !isGenerated(file)) {
     // 4-a) 여러 기능이 공유 (사용자 관점)
     const feats = featuresOf(features, file)
     if (feats.length >= rules.autolock.minFeatures) {
       return {
         action: rules.autolock.mode,
         rule: `autolock: >=${rules.autolock.minFeatures} features`,
-        reason:
-          t('rule.sharedFeatures', { list: feats.map(f => say.feature(f)).join(', '), count: feats.length }),
+        reason: t('rule.sharedFeatures', { list: shortList(feats.map(f => say.feature(f))), count: feats.length }),
         hint: nextStep(graph, features, file, say),
       }
     }
@@ -178,10 +177,7 @@ export function checkEdit(
           action: rules.autolock.mode,
           rule: `autolock: >=${min} modules`,
           reason:
-            t('rule.sharedModules', {
-              list: ms.slice(0, 3).map(m => say.module(m)).join(', '),
-              more: ms.length > 3 ? t('rule.sharedModulesMore', { count: ms.length - 3 }) : '',
-            }),
+            t('rule.sharedModules', { list: shortList(ms.map(m => say.module(m))), more: '' }),
           hint: nextStep(graph, features, file, say),
         }
       }
@@ -234,21 +230,21 @@ function nextStep(graph: Graph, features: Features, file: string, say: Say): str
 }
 
 /**
- * 대안 경로 제안: 같은 폴더에서 '실제 내용이 있고 기능 하나만 쓰는' 파일로 유도한다.
+ * 대안 경로 제안: 이 파일을 '가져다 쓰는' 쪽 중에서 기능 하나에만 속한 파일.
+ * 변경이 한 화면에만 필요하면 공유 파일 대신 거기서 고치면 된다.
+ *
+ * 예전에는 '같은 폴더의 다른 파일' 을 제안했다. 그러면 button.tsx 를 막고
+ * avatar.tsx 를 고치라고 했다. 관계없는 파일로 유도하는 건 막는 것보다 나쁘다.
  * 엉뚱한 걸 제안하느니 아무 말도 안 하는 게 낫다. (P4)
  */
 function extensionHint(graph: Graph, features: Features, file: string): string | undefined {
-  const dir = file.slice(0, file.lastIndexOf('/') + 1)
-  const free = [...graph.nodes.values()]
+  const free = [...new Set(graph.in(file).filter(e => e.kind === 'import').map(e => e.from))]
     .filter(
-      n =>
-        n.id.startsWith(dir) &&
-        n.id !== file &&
-        !IS_BARREL.test(n.id) &&
-        n.symbols.length > 0 &&
-        featuresOf(features, n.id).length === 1,
+      id =>
+        !IS_BARREL.test(id) &&
+        (graph.nodes.get(id)?.symbols.length ?? 0) > 0 &&
+        featuresOf(features, id).length === 1,
     )
-    .map(n => n.id)
     .sort()
   if (!free.length) return undefined
   return t('rule.freeNeighbours', { list: free.slice(0, 3).join(', ') })
@@ -308,3 +304,13 @@ export function matches(pattern: string, target: string): boolean {
 }
 
 const norm = (p: string) => p.replace(/\\/g, '/').replace(/^\.\//, '')
+
+/**
+ * 사람에게 보여줄 목록. 23개를 다 늘어놓으면 아무도 안 읽는다.
+ * 같은 이름은 한 번만 (GET /items 와 GET /items/{id} 는 둘 다 'Items read API' 로 읽힌다).
+ */
+export function shortList(names: string[], max = 3): string {
+  const uniq = [...new Set(names)]
+  const head = uniq.slice(0, max).join(', ')
+  return uniq.length > max ? head + t('rule.sharedModulesMore', { count: uniq.length - max }) : head
+}
