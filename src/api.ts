@@ -24,6 +24,7 @@ import { describeFeature, describeFile } from './core/labels.ts'
 import { archDiff, type ArchDiff } from './setup/archdiff.ts'
 import type { Recommendations, Recommendation, Reason, Skipped } from './core/recommend.ts'
 import type { VerifyRun, FeatureVerification, TestResult, TestStatus, VerifyOptions } from './core/verify.ts'
+import type { FileHistory } from './core/history.ts'
 import { setLang, type Lang } from './i18n/index.ts'
 
 export type { Verdict, Rules, Contract, ArchDiff, Recommendations, Recommendation, Reason, Skipped, VerifyRun, FeatureVerification, TestResult, TestStatus, VerifyOptions }
@@ -57,6 +58,12 @@ export interface FileFacts {
   contracts: Contract[]
   /** 이 파일을 검증하는 테스트 */
   tests: string[]
+  /**
+   * git 이력. 기간 안의 커밋 수와, 같은 커밋에 자주 함께 든 파일.
+   * 함께 바뀌는 파일은 import 없이도 이어진 숨은 결합이다. 작업자에게 "이것도 봐야 할지" 를 알려준다.
+   * git 이 없으면 null.
+   */
+  history: FileHistory | null
 }
 
 /** 작업자에게 줄 컨텍스트. 작업이 건드릴 파일들에 대한 사실만. */
@@ -64,6 +71,11 @@ export interface TaskContext {
   files: FileFacts[]
   /** 건드릴 파일들이 공통으로 영향을 주는 기능 */
   features: string[]
+  /**
+   * 건드릴 파일들과 자주 함께 바뀌었지만 이번 작업 목록에는 없는 파일.
+   * 작업 계약에 "이것도 확인" 으로 넣을 후보다. import 관계가 없어도 나온다.
+   */
+  coChanged: { file: string; together: number; with: string }[]
   /** 작업 전체에서 돌려야 할 테스트 (중복 제거) */
   tests: string[]
   /** 그 중 잠긴 파일. 작업 계약에서 '변경 금지' 로 적어야 한다 */
@@ -147,6 +159,7 @@ export class Codyssey {
       importers: [...new Set(this.d.graph.in(rel).filter(e => e.kind === 'import').map(e => e.from))].sort(),
       contracts: contractsOf(this.d.graph, rel),
       tests: testsFor(this.d.graph, rel),
+      history: this.d.history.unavailable ? null : (this.d.history.files.get(rel) ?? { file: rel, commits: 0, lastChanged: null, coChanges: [] }),
     }
   }
 
@@ -167,6 +180,10 @@ export class Codyssey {
       features: uniq(facts.flatMap(f => f.features)),
       tests: uniq(facts.flatMap(f => f.tests)),
       locked: facts.filter(f => f.locked).map(f => f.file),
+      coChanged: facts
+        .flatMap(f => (f.history?.coChanges ?? []).map(c => ({ file: c.file, together: c.together, with: f.file })))
+        .filter(c => c.together >= 2 && !facts.some(f => f.file === c.file))
+        .sort((a, b) => b.together - a.together || (a.file < b.file ? -1 : 1)),
     }
   }
 

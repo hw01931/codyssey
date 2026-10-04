@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { Graph } from './graph.ts'
 import { autolockCandidates, exclusiveOf, isGenerated, type Features } from './features.ts'
 import type { FeatureVerification } from './verify.ts'
+import { hotThreshold, type History } from './history.ts'
 import { crossModuleShared, type Modules } from './modules.ts'
 import { contractsOf, testsFor } from './contract.ts'
 import { alternativesFor, shortList, type Rules, type Say } from './rules.ts'
@@ -28,7 +29,7 @@ import { t } from '../i18n/index.ts'
  */
 
 export type Level = 'ask' | 'block'
-export type ReasonKind = 'shared-features' | 'shared-modules' | 'contract' | 'secret' | 'verified'
+export type ReasonKind = 'shared-features' | 'shared-modules' | 'contract' | 'secret' | 'verified' | 'churn' | 'co-change'
 
 export interface Reason {
   kind: ReasonKind
@@ -65,6 +66,8 @@ export interface Skipped {
 export interface Recommendations {
   recommend: Recommendation[]
   skipped: Skipped[]
+  /** 이력을 어디까지 봤는가. 얕은 clone 이면 churn 이 과소평가된다는 걸 사람이 알아야 한다 */
+  history: { days: number; commits: number; shallow: boolean; unavailable: boolean }
 }
 
 export interface RecommendInput {
@@ -77,6 +80,8 @@ export interface RecommendInput {
   say: Say
   /** 기능별 검증 상태. 있으면 '검증된 기능' 이 잠금 이유가 된다 */
   verifications?: FeatureVerification[]
+  /** git 이력. 있으면 자주 바뀌는 것이 위로 오고, 함께 바뀌는 파일이 이유에 붙는다 */
+  history?: History
 }
 
 /** 비밀로 보이는 파일 이름. `.env.example` 은 비밀이 아니다. */
@@ -148,6 +153,32 @@ export function recommend(input: RecommendInput): Recommendations {
     r.score += c.modules.length
   }
 
+  // 2-b) 이력. 공유되는데 자주 바뀌는 파일이 진짜 위험하다. 공유되지만 1년간 안 바뀐 파일은
+  //      잠가도 아무 일도 안 일어난다. 그래서 churn 은 점수에 크게 반영하고, 이유에도 숫자로 적는다.
+  const hist = input.history
+  if (hist && !hist.unavailable) {
+    const hot = hotThreshold(hist)
+    for (const r of recs.values()) {
+      const h = hist.files.get(r.file)
+      if (!h) continue
+      if (h.commits >= hot) {
+        r.reasons.push({ kind: 'churn', text: t('rec.churn', { count: h.commits, days: hist.days }), evidence: { count: h.commits } })
+        r.score += h.commits * 2
+      }
+      // 함께 바뀐 파일 중 import 관계가 없는 것만 말한다. import 가 있으면 그래프가 이미 안다.
+      const linked = new Set([...graph.in(r.file).map(e => e.from), ...graph.out(r.file).map(e => e.to)])
+      const hidden = h.coChanges.filter(c => !linked.has(c.file) && c.together >= 3 && graph.nodes.has(c.file))
+      if (hidden.length) {
+        r.reasons.push({
+          kind: 'co-change',
+          text: t('rec.coChange', { list: hidden.slice(0, 2).map(c => `${c.file} (${c.together})`).join(', ') }),
+          evidence: { list: hidden.map(c => c.file), count: hidden[0].together },
+        })
+        r.score += hidden[0].together
+      }
+    }
+  }
+
   // 3) 밖에 약속한 이름. 이미 추천에 오른 파일에만 덧붙인다 - 계약 하나로 잠금을 권하진 않는다.
   //    이름 하나가 5곳 이상에서 쓰이면 그건 별도 근거다.
   for (const r of recs.values()) {
@@ -199,7 +230,8 @@ export function recommend(input: RecommendInput): Recommendations {
 
   const recommend = [...recs.values()].sort((a, b) => b.score - a.score || (a.file < b.file ? -1 : 1))
   skipped.sort((a, b) => (a.file < b.file ? -1 : 1))
-  return { recommend, skipped }
+  const hmeta = input.history ?? { days: 0, commits: 0, shallow: false, unavailable: true }
+  return { recommend, skipped, history: { days: hmeta.days, commits: hmeta.commits, shallow: hmeta.shallow, unavailable: hmeta.unavailable } }
 }
 
 /** 이 파일을 검증하는 테스트가 있는가 */
@@ -246,6 +278,9 @@ export function renderRecommendations(r: Recommendations, opts: { max?: number; 
     L.push(`     ${dim(x.basis)}`)
   })
   if (r.recommend.length > top.length) L.push('  ' + dim(t('rec.more', { count: r.recommend.length - top.length })))
+  // 이력을 못 봤거나 잘려 있으면 말한다. 안 그러면 "자주 바뀜" 이 없는 게 사실인지 못 본 건지 모른다.
+  if (r.history.unavailable) L.push('  ' + dim(t('rec.history.none')))
+  else if (r.history.shallow) L.push('  ' + dim(t('rec.history.shallow', { commits: r.history.commits, days: r.history.days })))
   if (r.skipped.length) {
     L.push('', '  ' + t('rec.skippedTitle'))
     for (const s of r.skipped.slice(0, 6)) L.push(`     ${s.file}  ${dim(s.text)}`)

@@ -20,6 +20,7 @@ import { t, setLang, resolveLang, getLang, uiStrings } from '../i18n/index.ts'
 import { syncNativeDeny } from '../setup/native.ts'
 import { recommend, type Recommendations } from '../core/recommend.ts'
 import { runTests, allVerifications, verificationOf, type VerifyRun, type FeatureVerification, type VerifyOptions } from '../core/verify.ts'
+import { readHistory, emptyHistory, type History } from '../core/history.ts'
 
 /**
  * 웹 화면이 있는 곳.
@@ -66,6 +67,8 @@ export class Daemon {
   private names = new Map<string, string[]>()
   labels: Labels = emptyLabels()
   rules: Rules = defaultRules()
+  /** git 이력 신호. 전체 스캔 때 한 번 읽는다. 편집마다 git log 를 돌리면 느리다 */
+  history: History = emptyHistory()
   activity: Activity[] = []
   /** 우리 루트 밖에서 들어온 요청 수. 0 이 아니면 포트 설정이 잘못된 것이다. */
   foreign = 0
@@ -127,6 +130,7 @@ export class Daemon {
   // -------------------------------------------------------------- 인덱싱
 
   async fullScan() {
+    this.history = readHistory(this.repoRoot)
     this.ctx = createCtx(this.repoRoot)
     this.files.clear()
     for (const rel of listFiles(this.repoRoot)) {
@@ -524,6 +528,7 @@ export class Daemon {
       lockedFiles: this.lockedFiles(),
       say: this.say,
       verifications: this.verifications(),
+      history: this.history,
     })
   }
 
