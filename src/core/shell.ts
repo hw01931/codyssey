@@ -31,6 +31,21 @@ export interface ShellWrites {
    * `python -c "open('locked.ts','w')"` 는 그 안에 이름이 있으므로 여전히 막힌다.
    */
   opaqueWords: string[]
+  /**
+   * 되돌릴 수 없는 명령. 파일 하나를 고치는 게 아니라 작업물을 통째로 날린다.
+   *
+   * Claude Code 의 체크포인트는 Bash 가 바꾼 파일을 되돌리지 못한다. 그래서
+   * `rm -rf`, `git reset --hard`, `git clean -f` 는 사람이 모르고 넘기면 복구가 없다.
+   * 실제로 `rm -rf tests/ patches/ plan/ ~/` 가 홈 폴더를 지운 보고가 있다.
+   */
+  destructive: Destructive[]
+}
+
+export interface Destructive {
+  /** 사람에게 보여줄 명령 모양. 예: `rm -rf ~/`, `git reset --hard` */
+  what: string
+  /** rm 의 대상들. git 명령은 비어 있다 (작업 트리 전체) */
+  targets: string[]
 }
 
 /**
@@ -87,13 +102,14 @@ const GIT_WRITES = new Set([
 const MAX_DEPTH = 3
 
 export function shellWrites(command: string): ShellWrites {
-  const acc: Acc = { targets: new Set(), words: new Set(), opaqueWords: new Set(), opaque: false }
+  const acc: Acc = { targets: new Set(), words: new Set(), opaqueWords: new Set(), opaque: false, destructive: [] }
   analyze(command, acc, 0)
   return {
     targets: [...acc.targets].sort(),
     opaque: acc.opaque,
     words: [...acc.words].sort(),
     opaqueWords: [...acc.opaqueWords].sort(),
+    destructive: acc.destructive,
   }
 }
 
@@ -103,6 +119,7 @@ interface Acc {
   /** 해석 못 한 명령 쪽에서만 모은 것 */
   opaqueWords: Set<string>
   opaque: boolean
+  destructive: Destructive[]
 }
 
 function analyze(command: string, acc: Acc, depth: number) {
@@ -198,6 +215,11 @@ function analyzeSimple(toks: Tok[], acc: Acc, depth: number) {
   if (cmd === 'git') {
     const sub = args.find(a => !a.text.startsWith('-'))?.text
     if (sub && GIT_WRITES.has(sub)) markOpaque()
+    const flags = args.map(a => a.text)
+    // 커밋 안 한 작업을 통째로 버리는 것들. 파일 하나가 아니라 작업 트리 전체다.
+    if (sub === 'reset' && flags.includes('--hard')) acc.destructive.push({ what: 'git reset --hard', targets: [] })
+    if (sub === 'clean' && flags.some(f => /^-[a-zA-Z]*f|^--force$/.test(f))) acc.destructive.push({ what: 'git clean -f', targets: [] })
+    if ((sub === 'checkout' || sub === 'restore') && flags.includes('.')) acc.destructive.push({ what: `git ${sub} .`, targets: [] })
     return
   }
 
@@ -242,7 +264,12 @@ function analyzeSimple(toks: Tok[], acc: Acc, depth: number) {
   }
 
   if (OPERAND_WRITERS.has(cmd)) {
-    for (const a of operands(args)) addTarget(acc, a)
+    const ops = operands(args)
+    for (const a of ops) addTarget(acc, a)
+    // rm -r 은 폴더를 통째로 지운다. 어디를 지우는지는 위(데몬)가 저장소 기준으로 판단한다.
+    if (cmd === 'rm' && args.some(a => /^-[a-zA-Z]*[rR]|^--recursive$/.test(a.text)) && ops.length) {
+      acc.destructive.push({ what: `rm -r ${ops.map(o => o.text).join(' ')}`, targets: ops.map(o => norm(o.text)) })
+    }
     return
   }
 

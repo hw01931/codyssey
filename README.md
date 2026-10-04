@@ -121,11 +121,25 @@ In a real repository, `logger` in `src/shared/logger.ts` is imported by **83 fil
 Deleting something like that during a refactor is the most common accident, and a
 file lock does not catch it.
 
-**Tests to run** — what to check after the edit:
+**Tests to run** — what to check after the edit. Named tests, not "run the tests":
 
 ```
-->  Tests covering this file: tests/core/packager.test.ts
+->  Run these tests before you finish: tests/core/packager.test.ts
 ```
+
+If the agent tries to finish without running them, the `Stop` hook sends it back **once**
+with the same list. The second time it is let through: a nudge, not a wall.
+Giving the agent the specific affected tests is the one intervention with measured
+effect on regressions; generic "do TDD" instructions made them worse (TDAD, 2026 preprint).
+
+**Destructive commands** — `rm -rf` outside the project (or of the project itself),
+`git reset --hard`, `git clean -f`, `git checkout .` ask you first. Checkpoints cannot
+undo what Bash deleted.
+
+**Locks are also written as Claude Code rules.** Every `protect:` entry becomes
+`Edit(/path)` in `.claude/settings.json` → `permissions.deny`. That rule holds even when
+the daemon is down, covers `sed`/`tee`/redirects, and with the sandbox on it also covers
+writes from inside scripts, which no command-line parser can see.
 
 **Names that already exist** — building a function that is already there:
 
@@ -213,8 +227,13 @@ layers:                                     # forbid this direction of import
 
 autolock:                                   # files several features share
   minFeatures: 3
-  mode: ask                                 # off | ask | block
+  mode: note                                # off | note | ask | block
 ```
+
+`note` (the default) tells the **agent** "8 features use this file, keep them all working,
+run their tests" and lets the edit through. It does not ask you. People approve 93% of
+permission prompts and switch off tools that ask too often, so asking is reserved for
+`ask` mode and for files you locked yourself.
 
 ## Support
 

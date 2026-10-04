@@ -8,6 +8,7 @@ import { defaultRules } from '../core/rules.ts'
 import { resolvePort, savePort } from './port.ts'
 import { resolveLang, setLang, getLang, t, type Lang } from '../i18n/index.ts'
 import { rulesHeader, gitHookHeader } from '../i18n/template.ts'
+import { syncNativeDeny } from './native.ts'
 
 export interface InitResult {
   repoRoot: string
@@ -62,6 +63,14 @@ export async function init(repoRoot: string, requestedPort?: number, requestedLa
   const changed = mergeHooks(settingsPath, root, port)
   if (changed) wrote.push(rel(root, settingsPath))
   else skipped.push(rel(root, settingsPath) + ' ' + t('init.alreadySet'))
+
+  // 2-b) 잠금을 Claude Code 의 permissions.deny 에도 적는다. 훅이 죽어 있어도 막히게.
+  try {
+    const cur = YAML.parse(fs.readFileSync(rulesPath, 'utf8')) ?? {}
+    if (syncNativeDeny(root, Array.isArray(cur.protect) ? cur.protect : [])) wrote.push(rel(root, settingsPath) + ' (permissions.deny)')
+  } catch {
+    /* 규칙 파일이 깨졌으면 doctor 가 말한다 */
+  }
 
   // 3) MCP 서버 등록 (에이전트가 구조를 물어볼 창구)
   if (registerMcp(root, port)) wrote.push('.mcp.json')
@@ -186,6 +195,7 @@ function mergeHooks(settingsPath: string, root: string, port: number): boolean {
     ['PostToolUse', 'post'],
     ['SessionStart', 'session'],
     ['UserPromptSubmit', 'prompt'],
+    ['Stop', 'stop'],
   ] as const) {
     const url = `http://127.0.0.1:${port}/${endpoint}`
     settings.hooks[event] ??= []

@@ -32,7 +32,7 @@ export interface Rules {
   protect: ProtectRule[]
   features: FeatureRule[]
   layers: LayerRule[]
-  autolock: { minFeatures: number; minModules: number; mode: 'off' | 'ask' | 'block' }
+  autolock: { minFeatures: number; minModules: number; mode: 'off' | 'note' | 'ask' | 'block' }
   /**
    * 밖에서 이름으로 가져다 쓰는 export 를 없앨 때. 기본은 확인 요청.
    * 이름을 바꾸는 리팩터링 자체는 정상이므로 막기(block)를 기본으로 하지 않는다.
@@ -45,7 +45,7 @@ export const defaultRules = (): Rules => ({
   protect: [],
   features: [],
   layers: [],
-  autolock: { minFeatures: 3, minModules: 3, mode: 'ask' },
+  autolock: { minFeatures: 3, minModules: 3, mode: 'note' },
   contracts: { mode: 'ask' },
 })
 
@@ -63,9 +63,15 @@ export const inertRules = (): Rules => ({
   contracts: { mode: 'off' },
 })
 
+/**
+ * note  통과시키되 에이전트에게 사실을 알려준다. 사람은 방해받지 않는다.
+ *       공유 파일의 기본값이다. 사람에게 매번 물으면 93% 는 그냥 승인하고
+ *       나머지는 훅을 끈다. 모델에게 "이 파일은 기능 8개가 쓴다" 를 알려주는 쪽이
+ *       실제로 회귀를 줄인다 (TDAD, 2026).
+ */
 export type Verdict =
   | { action: 'allow' }
-  | { action: 'ask' | 'block'; reason: string; hint?: string; rule: string }
+  | { action: 'note' | 'ask' | 'block'; reason: string; hint?: string; rule: string }
 
 /** 기능·모듈·파일을 사람이 읽는 이름으로. 없으면 원문 그대로 쓴다. */
 export interface Say {
@@ -158,12 +164,13 @@ export function checkEdit(
   if (rules.autolock.mode !== 'off' && !isGenerated(file)) {
     // 4-a) 여러 기능이 공유 (사용자 관점)
     const feats = featuresOf(features, file)
+    const note = rules.autolock.mode === 'note'
     if (feats.length >= rules.autolock.minFeatures) {
       return {
         action: rules.autolock.mode,
         rule: `autolock: >=${rules.autolock.minFeatures} features`,
-        reason: t('rule.sharedFeatures', { list: shortList(feats.map(f => say.feature(f))), count: feats.length }),
-        hint: nextStep(graph, features, file, say),
+        reason: t(note ? 'rule.sharedFeaturesNote' : 'rule.sharedFeatures', { list: shortList(feats.map(f => say.feature(f))), count: feats.length }),
+        hint: note ? extensionHint(graph, features, file) : nextStep(graph, features, file, say),
       }
     }
 
@@ -176,9 +183,8 @@ export function checkEdit(
         return {
           action: rules.autolock.mode,
           rule: `autolock: >=${min} modules`,
-          reason:
-            t('rule.sharedModules', { list: shortList(ms.map(m => say.module(m))), more: '' }),
-          hint: nextStep(graph, features, file, say),
+          reason: t(note ? 'rule.sharedModulesNote' : 'rule.sharedModules', { list: shortList(ms.map(m => say.module(m))), more: '', count: ms.length }),
+          hint: note ? extensionHint(graph, features, file) : nextStep(graph, features, file, say),
         }
       }
     }

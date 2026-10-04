@@ -1,13 +1,14 @@
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import YAML from 'yaml'
 import chokidar from 'chokidar'
 import { buildGraph, createCtx, listFiles, parseFile, parseFailures, adapterFor, type FileInfo } from '../index/scan.ts'
 import { computeFeatures, allFilesOf, autolockCandidates, exclusiveOf, featuresOf, type Features } from '../core/features.ts'
 import { checkEdit, defaultRules, findViolations, inertRules, matches, type Rules, type Verdict } from '../core/rules.ts'
-import { shellWrites } from '../core/shell.ts'
+import { shellWrites, type Destructive } from '../core/shell.ts'
 import { computeModules, consumerModules, crossModuleShared, type Modules } from '../core/modules.ts'
 import { buildSymbolGraph, sharedSymbols, symbolImpact, type SymbolGraph } from '../core/symbols.ts'
 import type { Graph } from '../core/graph.ts'
@@ -16,6 +17,7 @@ import { deltaBrief, promptBrief, sessionBrief, snapshotEdges, type CtxInput } f
 import { brokenContracts, contractsOf, duplicateNames, nameIndex, testsFor } from '../core/contract.ts'
 import { describeFeature, describeFile, describeModule, emptyLabels, loadLabels, saveLabels, unlabeled, type Labels } from '../core/labels.ts'
 import { t, setLang, resolveLang, getLang, uiStrings } from '../i18n/index.ts'
+import { syncNativeDeny } from '../setup/native.ts'
 
 /**
  * 웹 화면이 있는 곳.
@@ -40,7 +42,7 @@ const UI_DIR = (() => {
 const CONFIG_FILES = ['.codyssey/rules.yaml', '.codyssey/labels.yaml']
 
 /** 한 명령이 여러 파일을 건드리면 제일 센 판정이 이긴다. */
-const RANK = { allow: 0, ask: 1, block: 2 } as const
+const RANK = { allow: 0, note: 1, ask: 2, block: 3 } as const
 
 export interface Activity {
   at: number
@@ -74,6 +76,15 @@ export class Daemon {
    */
   private asked = new Map<string, Set<string>>()
   private approved = new Map<string, Set<string>>()
+  /**
+   * 세션별로 '고친 파일을 검증하는 테스트 중 아직 안 돌린 것'.
+   *
+   * 테스트 이름을 알려주기만 하면 모델은 자주 그냥 넘어간다. 그래서 끝내려 할 때
+   * (Stop) 한 번 되돌려 보낸다. 한 번만이다. 두 번째는 통과시킨다 (P5). 무한 루프도,
+   * 돌릴 수 없는 환경에서 영영 못 끝내는 일도 없어야 한다.
+   */
+  private pendingTests = new Map<string, Set<string>>()
+  private nudged = new Set<string>()
   private ctx!: ResolveCtx
   private server?: http.Server
   private watcher?: chokidar.FSWatcher
@@ -224,6 +235,12 @@ export class Daemon {
         this.rules.layers ??= []
         this.rules.contracts = { ...defaultRules().contracts, ...(this.rules.contracts ?? {}) }
         this.rules.autolock = { ...defaultRules().autolock, ...(this.rules.autolock ?? {}) }
+        // 잠금은 Claude Code 의 permissions.deny 에도 적는다. 데몬이 죽어 있어도 막히게.
+        try {
+          syncNativeDeny(this.repoRoot, this.rules.protect)
+        } catch {
+          /* 설정을 못 써도 데몬은 산다 */
+        }
       }
     } catch {
       // P5: 룰 파일이 깨져도 데몬은 산다. 대신 아무것도 막지 않는다.
@@ -314,6 +331,27 @@ export class Daemon {
   }
 
   /**
+   * rm -r 이 프로젝트 밖이나 프로젝트 자체를 지우거나, git 이 작업 트리를 통째로 버리면 묻는다.
+   * 프로젝트 안의 폴더를 지우는 rm -r 은 여기서 안 잡는다. 잠긴 파일이면 위의 대상 판정이 잡는다.
+   */
+  private destructiveVerdict(list: Destructive[]): Verdict | null {
+    for (const d of list) {
+      if (!d.targets.length) {
+        return { action: 'ask', rule: t('daemon.destructiveRule'), reason: t('daemon.destructiveGit', { what: d.what }), hint: t('daemon.destructiveHint') }
+      }
+      const outside = d.targets.some(tg => {
+        const abs = tg === '~' || tg.startsWith('~/') ? path.join(os.homedir(), tg.slice(1)) : path.resolve(this.repoRoot, tg)
+        const rel = path.relative(this.repoRoot, abs)
+        return rel === '' || rel.startsWith('..') || path.isAbsolute(rel)
+      })
+      if (outside) {
+        return { action: 'ask', rule: t('daemon.destructiveRule'), reason: t('daemon.destructiveRm', { what: d.what }), hint: t('daemon.destructiveHint') }
+      }
+    }
+    return null
+  }
+
+  /**
    * 밖에 약속한 이름을 없애는 중인가.
    *
    * 파일 단위 잠금으로는 안 잡힌다. 그 파일을 고치는 건 대부분 정상이고,
@@ -344,7 +382,7 @@ export class Daemon {
     }
 
     const tests = testsFor(this.graph, file)
-    if (tests.length) notes.push(t('daemon.testsFor', { list: tests.slice(0, 3).join(', '), more: tests.length > 3 ? t('daemon.contractOthers', { count: tests.length - 3 }) : '' }))
+    if (tests.length) notes.push(t('daemon.runTests', { list: tests.slice(0, 3).join(', '), more: tests.length > 3 ? t('daemon.contractOthers', { count: tests.length - 3 }) : '' }))
 
     return notes
   }
@@ -360,7 +398,15 @@ export class Daemon {
    */
   private decideBash(tool: string, command: string): Verdict {
     if (!command.trim()) return { action: 'allow' }
-    const { targets, opaque, words, opaqueWords } = shellWrites(command)
+    const { targets, opaque, words, opaqueWords, destructive } = shellWrites(command)
+
+    // 0) 되돌릴 수 없는 명령. 파일 잠금과 무관하게, 사람이 보고 결정해야 한다.
+    //    체크포인트는 Bash 가 지운 것을 되살리지 못한다.
+    const d = this.destructiveVerdict(destructive)
+    if (d) {
+      this.log({ at: Date.now(), file: d.rule, action: 'ask', tool, reason: d.reason, rule: d.rule })
+      return d
+    }
 
     // 1) 확실히 짚어낸 쓰기 대상
     let worst: Verdict = { action: 'allow' }
@@ -469,6 +515,20 @@ export class Daemon {
     if (set.size > 400) set.clear()
     this.told.set(session, set)
     return true
+  }
+
+  /**
+   * 테스트를 돌렸으면 기다리던 목록에서 지운다.
+   * 특정 파일을 지정해 돌렸으면 그 파일만, 전체를 돌렸으면 전부.
+   */
+  private noteTestRun(session: string, command: string) {
+    const pending = this.pendingTests.get(session)
+    if (!pending?.size) return
+    const named = [...pending].filter(tf => command.includes(tf) || command.includes(path.basename(tf)))
+    if (named.length) for (const tf of named) pending.delete(tf)
+    else if (TEST_RUNNER.test(command)) pending.clear()
+    else return
+    if (!pending.size) this.nudged.delete(session) // 다음 편집 묶음에는 다시 한 번 알려줄 수 있다
   }
 
   toRel(p: string) {
@@ -595,6 +655,11 @@ export class Daemon {
         const verdict = this.decide(String(body.tool_name ?? ''), input)
         if (verdict.action === 'allow') return send(200, {}) // 조용히 통과 = 컨텍스트 0토큰
         const rel = input.file_path ? this.toRel(String(input.file_path)) : ''
+        if (verdict.action === 'note') {
+          // 사람은 방해하지 않는다. 모델에게만 사실을 알려준다. 권한 흐름은 그대로 흘러간다.
+          const text = [verdict.reason, verdict.hint].filter(Boolean).join('\n')
+          return send(200, { hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: `[codyssey] ${text}` } })
+        }
         if (rel && verdict.action === 'ask' && verdict.rule?.startsWith('autolock')) {
           if (this.approved.get(session)?.has(rel)) return send(200, {})
           remember(this.asked, session, rel)
@@ -635,15 +700,16 @@ export class Daemon {
         const body = await readJson(req)
         const input = (body.tool_input ?? {}) as Record<string, unknown>
         // Bash 로 고친 파일도 다시 읽어야 한다. 안 그러면 그래프가 조용히 낡는다.
-        const touched =
-          String(body.tool_name ?? '') === 'Bash'
-            ? shellWrites(String(input.command ?? '')).targets
-            : [String(input.file_path ?? '')]
+        const session = String(body.session_id ?? 'default')
+        const isBash = String(body.tool_name ?? '') === 'Bash'
+        if (isBash) this.noteTestRun(session, String(input.command ?? ''))
+        const touched = isBash ? shellWrites(String(input.command ?? '')).targets : [String(input.file_path ?? '')]
         const rels = touched.map(f => this.toRel(f)).filter(r => r && !r.startsWith('../') && adapterFor(r))
         if (!rels.length) return send(200, {})
         // 물어본 파일이 실제로 고쳐졌다 = 사람이 허락했다. 이 세션에서는 다시 묻지 않는다.
-        const session = String(body.session_id ?? 'default')
         for (const r of rels) if (this.asked.get(session)?.has(r)) remember(this.approved, session, r)
+        // 고친 파일을 검증하는 테스트를 기억해 둔다. 끝내려 할 때 안 돌렸으면 한 번 되돌린다.
+        for (const r of rels) for (const tf of testsFor(this.graph, r)) remember(this.pendingTests, session, tf)
 
         const rel = rels[0]
         const before = snapshotEdges(this.graph, rel)
@@ -662,6 +728,22 @@ export class Daemon {
             hookEventName: 'PostToolUse',
             additionalContext: `[codyssey] ${parts.join('\n')}`,
           },
+        })
+      }
+
+      if (url.pathname === '/stop' && req.method === 'POST') {
+        const body = await readJson(req)
+        const session = String(body.session_id ?? 'default')
+        const pending = [...(this.pendingTests.get(session) ?? [])].sort()
+        // 이미 한 번 되돌렸거나, 되돌린 뒤의 재시도라면 그냥 보낸다. 끝내는 걸 영영 막지 않는다 (P5).
+        if (!pending.length || body.stop_hook_active || this.nudged.has(session)) return send(200, {})
+        this.nudged.add(session)
+        return send(200, {
+          decision: 'block',
+          reason: `[codyssey] ${t('daemon.stopTests', {
+            list: pending.slice(0, 5).join(', '),
+            more: pending.length > 5 ? t('daemon.contractOthers', { count: pending.length - 5 }) : '',
+          })}`,
         })
       }
 
@@ -782,6 +864,9 @@ function readJson(req: http.IncomingMessage): Promise<Record<string, unknown>> {
     })
   })
 }
+
+/** 테스트를 돌리는 명령처럼 보이는가 */
+const TEST_RUNNER = /\b(npm|pnpm|yarn|bun)\s+(run\s+)?test\b|\b(npx\s+)?(jest|vitest|mocha|pytest|py\.test|tox|phpunit|rspec|playwright\s+test)\b|\bnode\s+--test\b|\b(go|cargo|dotnet)\s+test\b/
 
 function remember(m: Map<string, Set<string>>, session: string, file: string) {
   const set = m.get(session) ?? new Set<string>()

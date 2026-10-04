@@ -1,0 +1,5 @@
+{
+  "deny": [
+    "Edit(/src/core/graph.ts)"
+  ]
+}

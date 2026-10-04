@@ -59,7 +59,8 @@ const decide = (f: string) => daemon.decide('Edit', { file_path: f })
 console.log(`${NL}[손으로 쓴 rules.yaml 이 반영되나]`)
 // README 가 "직접 써도 됩니다" 라고 안내한다. 반영이 안 되면
 // 잠갔다고 믿는데 실제로는 무방비인 상태가 된다.
-eq('편집 전에는 안 막힌다', decide('api/services/payment.py').action, 'ask')
+// 공유 파일의 기본값은 note (모델에게만 알림). 사람이 잠그기 전에는 막지 않는다.
+eq('편집 전에는 안 막힌다', decide('api/services/payment.py').action, 'note')
 
 fs.mkdirSync(path.join(tmp, '.codyssey'), { recursive: true })
 fs.writeFileSync(

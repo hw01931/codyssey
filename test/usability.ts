@@ -118,6 +118,8 @@ fs.rmSync(path.join(tmp, '.codyssey'), { recursive: true, force: true })
 fs.rmSync(path.join(tmp, '.claude'), { recursive: true, force: true })
 // 생성 파일을 하나 끼워 넣는다. 세 화면이 다 가져다 쓴다.
 write(tmp, 'web/lib/api.gen.ts', 'export const API = "/api"\n')
+// money.ts 를 검증하는 테스트. 픽스처에는 테스트가 없다.
+write(tmp, 'web/__tests__/money.test.ts', "import { formatMoney } from '../lib/money'\nexport const ok = formatMoney(1)\n")
 for (const page of ['web/app/admin/page.tsx', 'web/app/checkout/page.tsx', 'web/app/orders/page.tsx']) {
   fs.appendFileSync(path.join(tmp, page), `${NL}import { API } from '../../lib/api.gen'${NL}export const __api = API${NL}`)
 }
@@ -135,6 +137,15 @@ const after = (session: string, file: string) =>
 
 {
   const shared = 'web/lib/money.ts'
+  // 기본값: 사람에게 묻지 않는다. 모델에게만 알려주고 권한 흐름은 그대로 흘러간다.
+  // 사람에게 매번 물으면 93% 는 그냥 승인하고 나머지는 훅을 끈다.
+  const noted = await pre('s0', shared)
+  eq('공유 파일은 기본으로 사람에게 묻지 않는다', noted.hookSpecificOutput?.permissionDecision, undefined)
+  ok('대신 모델에게 몇 기능이 쓰는지 알려준다', String(noted.hookSpecificOutput?.additionalContext ?? '').includes('3'))
+
+  // 사람이 ask 로 바꾸면 묻는다. 그때도 한 세션에서 한 번만.
+  write(tmp, '.codyssey/rules.yaml', `autolock: { minFeatures: 3, mode: ask }${NL}`)
+  daemon.loadRules()
   const first = await pre('s1', shared)
   // Claude Code 가 받는 값은 allow | deny | ask | defer 뿐이다. 모르는 값이면 확인이 안 뜬다.
   eq('확인 요청은 Claude Code 가 아는 값(ask)으로 보낸다', first.hookSpecificOutput?.permissionDecision, 'ask')
@@ -153,6 +164,60 @@ const after = (session: string, file: string) =>
   ok('생성 파일은 잠금 후보 목록에도 없다',
     !autolockCandidates(features, 3).some(c => c.file === 'web/lib/api.gen.ts'),
     `기능 ${featuresOf(features, 'web/lib/api.gen.ts').length}개가 씀`)
+}
+
+console.log(`${NL}[고친 뒤 테스트를 안 돌리고 끝내려 하면]`)
+{
+  const stop = (session: string, active = false) => post('/stop', { session_id: session, stop_hook_active: active })
+  const bashDone = (session: string, command: string) => post('/post', { session_id: session, tool_name: 'Bash', tool_input: { command } })
+
+  const hint = await after('t1', 'web/lib/money.ts')
+  ok('편집 뒤에 돌릴 테스트를 이름으로 알려준다', String(hint.hookSpecificOutput?.additionalContext ?? '').includes('money.test.ts'))
+  const first = await stop('t1')
+  eq('안 돌리고 끝내려 하면 한 번 되돌린다', first.decision, 'block')
+  ok('무엇을 돌려야 하는지 말한다', String(first.reason ?? '').includes('money.test.ts'))
+  eq('두 번째는 보내준다 (영영 막지 않는다)', await stop('t1'), {})
+  eq('되돌린 뒤의 재시도(stop_hook_active)도 보내준다', await stop('t1', true), {})
+
+  await after('t2', 'web/lib/money.ts')
+  await bashDone('t2', 'npx vitest run web/__tests__/money.test.ts')
+  eq('테스트를 돌렸으면 조용히 끝낸다', await stop('t2'), {})
+
+  await after('t3', 'web/lib/money.ts')
+  await bashDone('t3', 'npm test')
+  eq('전체 테스트를 돌린 것도 인정한다', await stop('t3'), {})
+
+  eq('고친 게 없으면 아무 말 안 한다', await stop('t4'), {})
+}
+
+console.log(`${NL}[되돌릴 수 없는 명령]`)
+{
+  const bash = (command: string) => post('/pre', { session_id: 'b', tool_name: 'Bash', tool_input: { command } })
+  const decision = async (command: string) => (await bash(command)).hookSpecificOutput?.permissionDecision
+  eq('rm -rf ~/ 는 사람에게 묻는다', await decision('rm -rf tests/ patches/ plan/ ~/'), 'ask')
+  eq('프로젝트 밖을 지우는 rm -r 도', await decision('rm -r ../other-project'), 'ask')
+  eq('프로젝트 자체를 지우는 것도', await decision(`rm -rf ${tmp}`), 'ask')
+  eq('git reset --hard 는 묻는다', await decision('git reset --hard HEAD~1'), 'ask')
+  eq('git clean -fd 도', await decision('git clean -fd'), 'ask')
+  eq('프로젝트 안의 폴더를 지우는 건 묻지 않는다', await bash('rm -rf dist'), {})
+  eq('rm 한 파일은 묻지 않는다', await bash('rm web/app/admin/page.tsx'), {})
+  eq('git status 는 묻지 않는다', await bash('git status && git log --oneline'), {})
+}
+
+console.log(`${NL}[잠금이 Claude Code 설정에도 적힌다]`)
+{
+  write(tmp, '.codyssey/rules.yaml', `protect:${NL}  - path: web/lib/money.ts${NL}  - path: api/services/**${NL}`)
+  daemon.loadRules()
+  const settings = () => JSON.parse(fs.readFileSync(path.join(tmp, '.claude', 'settings.json'), 'utf8'))
+  eq('protect 가 permissions.deny 로', settings().permissions?.deny, ['Edit(/api/services/**)', 'Edit(/web/lib/money.ts)'])
+
+  // 사람이 손으로 넣은 deny 는 건드리지 않는다
+  const s = settings()
+  s.permissions.deny.push('Bash(curl *)')
+  fs.writeFileSync(path.join(tmp, '.claude', 'settings.json'), JSON.stringify(s))
+  write(tmp, '.codyssey/rules.yaml', `protect:${NL}  - path: web/lib/money.ts${NL}`)
+  daemon.loadRules()
+  eq('잠금을 풀면 우리 항목만 빠지고 사람 항목은 남는다', settings().permissions?.deny, ['Bash(curl *)', 'Edit(/web/lib/money.ts)'])
 }
 
 {
