@@ -158,6 +158,31 @@ writes from inside scripts, which no command-line parser can see.
 Informing adds **nothing when there is nothing to say**, and never repeats itself.
 A few hundred tokens on every edit is noise, not help.
 
+## Use it as a library
+
+The hooks, the MCP server and the web view are shells around one engine. Another
+program (an orchestrator that hands tasks to several AI workers, for example) can call
+the engine directly. No daemon, no port, no hook JSON.
+
+```ts
+import { Codyssey } from 'codyssey'
+
+const c = await Codyssey.open('/path/to/repo')
+
+c.features()                       // [{ id: 'PAGE /checkout', label, file, files: [...] }]
+c.contextFor(['src/pay/core.py'])  // facts for a task contract: features, importers,
+                                   // exported names others use, tests to run, locked files
+c.checkEdit('src/pay/core.py', { before, after })  // allow | note | ask | block, with reason
+c.checkCommand('rm -rf ~/')        // ask: nothing can undo it
+c.checkChanges(diffFiles)          // gate before merging a worker's diff
+await c.afterEdit('src/pay/core.py') // re-index, returns { tests, notes }
+c.lock('src/pay/core.py', 'payment core')  // also written to Claude Code permissions.deny
+await c.diff('origin/main')        // architecture diff
+```
+
+Everything returned is structured data, not prose. Turning facts into words for a
+particular model is the caller's job. Types ship in `dist/types/api.d.ts`.
+
 ## In pull requests
 
 ```bash

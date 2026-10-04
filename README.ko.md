@@ -143,6 +143,31 @@ AI 가 리팩터링하다 이런 걸 지우는 게 가장 흔한 사고인데, �
 알림은 **할 말이 없으면 아무것도 넣지 않습니다.** 같은 말을 두 번 하지도 않습니다.
 편집마다 수백 토큰씩 붙이면 도움이 아니라 방해입니다.
 
+## 라이브러리로 쓰기
+
+훅·MCP 서버·웹 화면은 전부 하나의 엔진 위에 얹힌 껍데기입니다. 다른 프로그램
+(예: 여러 AI 작업자에게 일을 나눠 주는 오케스트레이터)이 엔진을 바로 부를 수 있습니다.
+데몬도, 포트도, 훅 JSON 흉내도 필요 없습니다.
+
+```ts
+import { Codyssey } from 'codyssey'
+
+const c = await Codyssey.open('/path/to/repo')
+
+c.features()                       // [{ id: 'PAGE /checkout', label, file, files: [...] }]
+c.contextFor(['src/pay/core.py'])  // 작업 계약에 넣을 사실: 영향 기능, import 하는 곳,
+                                   // 밖에서 쓰는 export, 돌릴 테스트, 잠긴 파일
+c.checkEdit('src/pay/core.py', { before, after })  // allow | note | ask | block + 이유
+c.checkCommand('rm -rf ~/')        // ask: 되돌릴 수 없다
+c.checkChanges(diffFiles)          // 작업자의 변경을 합치기 전 검사
+await c.afterEdit('src/pay/core.py') // 그래프 갱신, { tests, notes } 반환
+c.lock('src/pay/core.py', '결제 코어')  // Claude Code permissions.deny 에도 적힌다
+await c.diff('origin/main')        // 아키텍처 diff
+```
+
+돌려주는 값은 전부 구조화된 데이터입니다. 사실을 문장으로 바꾸는 건 부르는 쪽이 합니다.
+모델이 다르면 필요한 문장도 다르기 때문입니다. 타입은 `dist/types/api.d.ts` 에 있습니다.
+
 ## PR 에서
 
 ```bash

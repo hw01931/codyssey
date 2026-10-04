@@ -11,6 +11,18 @@ import path from 'node:path'
 
 fs.rmSync('dist', { recursive: true, force: true })
 
+// 라이브러리 진입점도 같이 묶는다. 다른 프로그램이 `import { Codyssey } from 'codyssey'` 로 쓴다.
+await build({
+  entryPoints: ['src/api.ts'],
+  bundle: true,
+  platform: 'node',
+  target: 'node20',
+  format: 'esm',
+  outfile: 'dist/api.js',
+  external: ['web-tree-sitter', 'tree-sitter-wasm', 'chokidar', 'yaml', '@modelcontextprotocol/sdk', 'zod'],
+  logLevel: 'warning',
+})
+
 await build({
   entryPoints: ['src/cli.ts'],
   bundle: true,
@@ -31,6 +43,16 @@ for (const f of fs.readdirSync('src/ui')) {
   fs.copyFileSync(path.join('src/ui', f), path.join('dist/ui', f))
 }
 
+// 타입 선언. esbuild 는 .d.ts 를 안 만든다. 기존 타입 오류가 있어도 선언은 나온다 (noEmitOnError 기본값 false).
+import { execFileSync } from 'node:child_process'
+try {
+  execFileSync('npx', ['tsc', '-p', 'tsconfig.types.json'], { stdio: 'pipe' })
+} catch {
+  /* 타입 오류는 선언 생성을 막지 않는다. 파일이 나왔는지만 본다 */
+}
+if (!fs.existsSync('dist/types/api.d.ts')) console.warn('dist/types/api.d.ts 가 생성되지 않았다')
+
 const size = fs.statSync('dist/cli.js').size
 console.log(`dist/cli.js  ${(size / 1024).toFixed(0)}KB`)
+console.log(`dist/api.js  ${(fs.statSync('dist/api.js').size / 1024).toFixed(0)}KB`)
 console.log(`dist/ui/     ${fs.readdirSync('dist/ui').length}개 파일`)

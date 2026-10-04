@@ -103,12 +103,16 @@ export class Daemon {
     return path.join(this.repoRoot, '.codyssey', 'rules.yaml')
   }
 
-  async start({ watch = true } = {}) {
+  /**
+   * listen=false 면 HTTP 를 열지 않는다. 라이브러리로 쓸 때 (src/api.ts).
+   * 그때는 포트도 의미가 없고, 훅 요청도 오지 않는다.
+   */
+  async start({ watch = true, listen = true } = {}) {
     await this.fullScan()
     this.loadRules()
     this.loadLabels()
     if (watch) this.startWatching()
-    await this.listen()
+    if (listen) await this.listen()
     return this
   }
 
@@ -255,6 +259,12 @@ export class Daemon {
   saveRules() {
     fs.mkdirSync(path.dirname(this.rulesPath), { recursive: true })
     fs.writeFileSync(this.rulesPath, YAML.stringify(this.rules))
+    // 화면·MCP·API 에서 잠근 것도 바로 Claude Code 규칙에 적는다. 파일 감시에 기대지 않는다.
+    try {
+      syncNativeDeny(this.repoRoot, this.rules.protect)
+    } catch {
+      /* 설정을 못 써도 잠금 자체는 유효하다 */
+    }
   }
 
   /** 기능 단위 잠금. 기본은 그 기능만 쓰는 파일에만 걸린다. */
@@ -324,7 +334,12 @@ export class Daemon {
     const whole = input.content !== undefined && input.old_string === undefined
 
     let verdict = this.checkFile(file, after)
-    if (verdict.action === 'allow') verdict = this.checkContract(file, { before, after, whole })
+    // note 는 통과다. 통과시킬 거면 계약(밖에 약속한 이름)도 봐야 한다.
+    // 공유 파일이라 note 를 내고 끝내면, 바로 그 공유 파일의 export 삭제가 조용히 지나간다.
+    if (RANK[verdict.action] <= RANK.note) {
+      const contract = this.checkContract(file, { before, after, whole })
+      if (RANK[contract.action] > RANK[verdict.action]) verdict = contract
+    }
 
     this.log({ at: Date.now(), file, action: verdict.action, tool, ...(verdict.action !== 'allow' ? { reason: verdict.reason, rule: verdict.rule } : {}) })
     return verdict

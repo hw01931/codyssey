@@ -61,6 +61,17 @@ fs.mkdirSync(path.join(tmp, '.git', 'hooks'), { recursive: true })
 const cli = (args: string[]) =>
   spawnSync(process.execPath, [CLI, ...args, '--root', tmp], { encoding: 'utf8', timeout: 90_000 })
 
+console.log(`${NL}[라이브러리로 부른다]`)
+{
+  ok('dist/api.js 가 있다', fs.existsSync(path.resolve('dist/api.js')))
+  ok('타입 선언이 있다', fs.existsSync(path.resolve('dist/types/api.d.ts')))
+  const { Codyssey } = await import(path.resolve('dist/api.js'))
+  const cx = await Codyssey.open(path.resolve('fixtures/shop'), { watch: false })
+  ok('배포본 API 로 기능이 나온다', cx.features().length >= 3)
+  eq('배포본 API 판정도 같다', cx.checkCommand('git reset --hard').action, 'ask')
+  await cx.close()
+}
+
 console.log(`${NL}[설치하면 데몬이 실제로 뜬다]`)
 const out = cli(['init', '--no-open', '--lang', 'en'])
 ok('init 이 끝난다', out.status === 0, out.stderr?.slice(0, 200) ?? '')
