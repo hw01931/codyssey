@@ -23,6 +23,8 @@ import type { ProtectRule } from '../core/rules.ts'
 const MARK = path.join('.codyssey', 'native.json')
 
 export const denyRule = (p: string) => `Edit(/${p.replace(/^\.?\//, '')})`
+/** 비밀 파일은 읽는 것도 막는다. Read 규칙은 Bash 의 cat/head/sed 에도 적용된다 (공식 문서). */
+export const readDenyRule = (p: string) => `Read(/${p.replace(/^\.?\//, '')})`
 
 export function syncNativeDeny(root: string, protect: ProtectRule[]): boolean {
   const settingsPath = path.join(root, '.claude', 'settings.json')
@@ -43,7 +45,7 @@ export function syncNativeDeny(root: string, protect: ProtectRule[]): boolean {
     /* 처음이다 */
   }
 
-  const want = [...new Set(protect.map(p => denyRule(p.path)))].sort()
+  const want = [...new Set(protect.flatMap(p => (p.secret ? [denyRule(p.path), readDenyRule(p.path)] : [denyRule(p.path)])))].sort()
   const current: string[] = Array.isArray(settings.permissions?.deny) ? settings.permissions.deny : []
   const mine = new Set(previous)
   const kept = current.filter(r => !mine.has(r))

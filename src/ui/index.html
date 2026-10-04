@@ -352,7 +352,10 @@ function render() {
         <div><b>${esc(s.label ?? s.file.split('/').pop())}</b></div>
         <div class="path" style="opacity:.7">${esc(s.file)}</div>
         <div>${s.why.map(f => `<span class="badge">${esc(shortFeature(f))}</span>`).join('')}</div>
-        <div class="hint" style="margin:4px 0 0">${T('ui.sharedBy', { count: s.why.length })}</div>
+        ${(s.reasons ?? []).length
+          ? s.reasons.map(r => `<div class="hint" style="margin:4px 0 0">${esc(r)}</div>`).join('') +
+            `<div class="hint" style="margin:4px 0 0;opacity:.75">${esc(s.effect ?? '')}</div>`
+          : `<div class="hint" style="margin:4px 0 0">${esc(s.skipped ?? T('ui.sharedBy', { count: s.why.length }))}</div>`}
         <div class="row" style="margin-top:8px">
           <button class="small danger" data-lock="${esc(s.file)}">${T('ui.protect')}</button>
         </div>

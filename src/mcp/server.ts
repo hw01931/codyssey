@@ -1,4 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { renderRecommendations } from '../core/recommend.ts'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { health, resolvePort } from '../setup/port.ts'
@@ -72,6 +73,9 @@ export async function runMcp(repoRoot: string, explicitPort?: number) {
       ]
       const locked = s.nodes.filter((n: any) => n.locked).map((n: any) => n.id)
       if (locked.length) L.push('', t('mcp.lockedTitle'), ...locked.map((f: string) => `  ${f}`))
+      if (s.recommendations?.recommend?.length) {
+        L.push('', t('mcp.recommendTitle'), ...renderRecommendations(s.recommendations, { max: 5 }))
+      }
       return text(L.join('\n'))
     },
   )

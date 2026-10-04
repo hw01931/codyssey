@@ -22,9 +22,10 @@ import { featuresOf, allEntriesOf } from './core/features.ts'
 import { contractsOf, testsFor, type Contract } from './core/contract.ts'
 import { describeFeature, describeFile } from './core/labels.ts'
 import { archDiff, type ArchDiff } from './setup/archdiff.ts'
+import type { Recommendations, Recommendation, Reason, Skipped } from './core/recommend.ts'
 import { setLang, type Lang } from './i18n/index.ts'
 
-export type { Verdict, Rules, Contract, ArchDiff }
+export type { Verdict, Rules, Contract, ArchDiff, Recommendations, Recommendation, Reason, Skipped }
 
 export interface Feature {
   id: string
@@ -201,8 +202,17 @@ export class Codyssey {
 
   // -------------------------------------------------------------- 규칙
 
-  lock(file: string, reason?: string) {
-    return this.d.setLock(this.d.toRel(file), true, reason)
+  /**
+   * 잠금 추천. 무엇을, 왜(근거값 포함), 잠그면 어떻게 되는지, 그리고 추천하지 않는 것은 왜인지.
+   * 협업 프로그램의 '보호할 기능 선택' 화면이 바로 이 목록이다.
+   */
+  recommendations(): Recommendations {
+    return this.d.recommendations()
+  }
+
+  /** secret: true 면 읽기도 막는다 (.env 같은 것). */
+  lock(file: string, reason?: string, opts: { secret?: boolean } = {}) {
+    return this.d.setLock(this.d.toRel(file), true, reason, opts)
   }
 
   unlock(file: string) {

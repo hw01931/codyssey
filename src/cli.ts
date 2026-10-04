@@ -4,7 +4,7 @@ import path from 'node:path'
 import { scan } from './index/scan.ts'
 import type { Graph } from './core/graph.ts'
 import { computeFeatures, autolockCandidates, featuresOf, allEntriesOf } from './core/features.ts'
-import { shortList } from './core/rules.ts'
+import { renderRecommendations } from './core/recommend.ts'
 import { Daemon } from './daemon/server.ts'
 import { init, openBrowser, spawnDaemon } from './setup/init.ts'
 import { health, resolvePort, samePath, savePort } from './setup/port.ts'
@@ -299,20 +299,21 @@ async function cmdScan() {
 }
 
 async function cmdStatus() {
-  const { graph } = await scan(root)
-  const feat = computeFeatures(graph)
+  // 한 번만 읽는다. 추천에 모듈·라벨·규칙이 필요해서 데몬 객체를 쓴다 (HTTP 는 안 연다).
+  const d = new Daemon(root)
+  await d.start({ watch: false, listen: false })
+  const graph = d.graph
+  const feat = d.features
 
   console.log(`\n${C.b(t('cli.status.features'))} ${C.dim(t('cli.status.featuresHint'))}`)
   for (const e of feat.roots) {
     console.log(`  ${e.id.padEnd(26)} ${String(feat.members.get(e.id)!.size).padStart(3)} files   ${C.dim(e.file)}`)
   }
 
-  const locks = autolockCandidates(feat, 3)
-  if (locks.length) {
-    console.log(`\n${C.b(t('cli.status.locks'))} ${C.dim(t('cli.status.locksHint'))}`)
-    // 파일마다 기능 23개를 늘어놓으면 화면이 기능 이름으로 덮인다. 개수와 앞의 몇 개만.
-    for (const c of locks) console.log(`  ${c.file.padEnd(40)} ${C.dim(`${c.features.length} · ${shortList(c.features)}`)}`)
-  }
+  // 잠금 추천. 숫자 하나가 아니라 무엇을·왜·잠그면 어떻게 되는지를 같이 말한다.
+  const recs = d.recommendations()
+  console.log(`\n${C.b(t('cli.status.locks'))} ${C.dim(t('cli.status.locksHint', { count: recs.recommend.length }))}`)
+  for (const line of renderRecommendations(recs, { dim: C.dim })) console.log(line)
 
   const cross = graph.edges.filter(e => e.kind === 'http')
   if (cross.length) {
@@ -327,6 +328,7 @@ async function cmdStatus() {
     for (const u of graph.unresolved) console.log(`  ${u.from}:${u.line}  ${u.spec}`)
   }
   console.log()
+  await d.stop()
 }
 
 async function cmdImpact(file?: string) {

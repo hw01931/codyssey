@@ -4,6 +4,8 @@ import { consumerModules, type Modules } from './modules.ts'
 import { t, setLang, type Lang } from '../i18n/index.ts'
 
 export interface ProtectRule {
+  /** 비밀 파일. 고치는 것뿐 아니라 읽는 것도 막는다 (Claude Code 규칙으로) */
+  secret?: boolean
   path: string
   reason?: string
 }
@@ -244,7 +246,14 @@ function nextStep(graph: Graph, features: Features, file: string, say: Say): str
  * 엉뚱한 걸 제안하느니 아무 말도 안 하는 게 낫다. (P4)
  */
 function extensionHint(graph: Graph, features: Features, file: string): string | undefined {
-  const free = [...new Set(graph.in(file).filter(e => e.kind === 'import').map(e => e.from))]
+  const free = alternativesFor(graph, features, file)
+  if (!free.length) return undefined
+  return t('rule.freeNeighbours', { list: free.slice(0, 3).join(', ') })
+}
+
+/** 이 파일을 쓰는 곳 중 기능 하나에만 속한 파일. 한 기능에만 필요한 변경은 거기서 하면 된다. */
+export function alternativesFor(graph: Graph, features: Features, file: string): string[] {
+  return [...new Set(graph.in(file).filter(e => e.kind === 'import').map(e => e.from))]
     .filter(
       id =>
         !IS_BARREL.test(id) &&
@@ -252,8 +261,6 @@ function extensionHint(graph: Graph, features: Features, file: string): string |
         featuresOf(features, id).length === 1,
     )
     .sort()
-  if (!free.length) return undefined
-  return t('rule.freeNeighbours', { list: free.slice(0, 3).join(', ') })
 }
 
 /** 새로 추가된 텍스트에서 import spec 을 뽑는다. 정규식으로 충분하다 - 확신 없으면 안 막으니까. */

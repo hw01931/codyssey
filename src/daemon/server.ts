@@ -18,6 +18,7 @@ import { brokenContracts, contractsOf, duplicateNames, nameIndex, testsFor } fro
 import { describeFeature, describeFile, describeModule, emptyLabels, loadLabels, saveLabels, unlabeled, type Labels } from '../core/labels.ts'
 import { t, setLang, resolveLang, getLang, uiStrings } from '../i18n/index.ts'
 import { syncNativeDeny } from '../setup/native.ts'
+import { recommend, type Recommendations } from '../core/recommend.ts'
 
 /**
  * 웹 화면이 있는 곳.
@@ -287,17 +288,18 @@ export class Daemon {
    * 저장되고, 그게 SessionStart 브리핑에 "잠긴 파일: undefined" 로 새어나간다.
    * 가드레일 도구가 자기 설정을 못 지키면 신뢰가 통째로 무너진다.
    */
-  setLock(file: unknown, locked: boolean, reason?: string): { ok: true } | { ok: false; error: string } {
-    const path = typeof file === 'string' ? file.trim() : ''
-    if (!path || path === 'undefined' || path === 'null') {
+  setLock(file: unknown, locked: boolean, reason?: string, opts: { secret?: boolean } = {}): { ok: true } | { ok: false; error: string } {
+    const given = typeof file === 'string' ? file.trim() : ''
+    if (!given || given === 'undefined' || given === 'null') {
       return { ok: false, error: t('daemon.needFilePath', { got: JSON.stringify(file) }) }
     }
-    const rel = this.toRel(path)
+    const rel = this.toRel(given)
     if (rel.startsWith('../')) {
-      return { ok: false, error: t('daemon.outsideProject', { path }) }
+      return { ok: false, error: t('daemon.outsideProject', { path: given }) }
     }
-    // 글롭이 아니면서 그래프에도 없으면 오타일 가능성이 높다
-    if (!rel.includes('*') && !this.graph.nodes.has(rel)) {
+    // 글롭이 아니면서 그래프에도 없으면 오타일 가능성이 높다. 비밀 파일(.env)은 코드가 아니라
+    // 그래프에 없으므로 실제로 존재하는지만 본다.
+    if (!rel.includes('*') && !this.graph.nodes.has(rel) && !(opts.secret && fs.existsSync(path.join(this.repoRoot, rel)))) {
       return { ok: false, error: t('daemon.noSuchFile', { file: rel }) }
     }
 
@@ -308,7 +310,7 @@ export class Daemon {
     // 사람이 적은 사유는 그 사람의 말이므로 손대지 않는다.
     if (locked) {
       const written = reason?.trim()
-      this.rules.protect.push(written ? { path: rel, reason: written } : { path: rel })
+      this.rules.protect.push({ path: rel, ...(written ? { reason: written } : {}), ...(opts.secret ? { secret: true } : {}) })
     }
     this.rules.protect.sort((a, b) => (a.path < b.path ? -1 : 1))
     this.saveRules()
@@ -510,6 +512,19 @@ export class Daemon {
     if (this.activity.length > 200) this.activity.length = 200
   }
 
+  /** 잠금 추천. 무엇을, 왜, 잠그면 어떻게 되는지, 추천하지 않는 것은 왜인지. */
+  recommendations(): Recommendations {
+    return recommend({
+      repoRoot: this.repoRoot,
+      graph: this.graph,
+      features: this.features,
+      modules: this.modules,
+      rules: this.rules,
+      lockedFiles: this.lockedFiles(),
+      say: this.say,
+    })
+  }
+
   /** 잠긴 파일 전체 (명시 잠금 + 기능 잠금) */
   lockedFiles(): Set<string> {
     const locked = new Set(this.rules.protect.map(p => p.path))
@@ -563,6 +578,15 @@ export class Daemon {
   // -------------------------------------------------------------- 상태
 
   state() {
+    const recs = this.recommendations()
+    const byFile = new Map(recs.recommend.map(r => [r.file, r]))
+    /** 화면 카드에 붙일 이유·효과. 추천에 없는 파일(생성·빈 파일)은 빠진 이유를 준다. */
+    const explain = (file: string) => {
+      const r = byFile.get(file)
+      if (r) return { level: r.level, reasons: r.reasons.map(x => x.text), effect: r.effect, alternatives: r.alternatives }
+      const sk = recs.skipped.find(x => x.file === file)
+      return sk ? { skipped: sk.text } : {}
+    }
     const locked = this.lockedFiles()
     return {
       repoRoot: this.repoRoot,
@@ -609,18 +633,21 @@ export class Daemon {
       modules: [...this.modules.members.entries()]
         .map(([name, fs]) => ({ name, label: this.say.module(name), files: fs.length }))
         .sort((a, b) => b.files - a.files || (a.name < b.name ? -1 : 1)),
+      recommendations: recs,
       suggestions: [
         ...autolockCandidates(this.features, this.rules.autolock.minFeatures).map(c => ({
           file: c.file,
           label: this.say.file(c.file),
           why: c.features.map(f => this.say.feature(f)),
           kind: 'feature' as const,
+          ...explain(c.file),
         })),
         ...crossModuleShared(this.graph, this.modules, this.rules.autolock.minModules ?? 3).map(c => ({
           file: c.file,
           label: this.say.file(c.file),
           why: c.modules.map(m => this.say.module(m)),
           kind: 'module' as const,
+          ...explain(c.file),
         })),
         // 파일 단위로 아무것도 안 나오면(한 파일에 몰아넣은 프로젝트) 심볼 단위로 본다.
         ...(crossModuleShared(this.graph, this.modules, this.rules.autolock.minModules ?? 3).length
