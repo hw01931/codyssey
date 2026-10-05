@@ -184,3 +184,93 @@ export function testsFor(graph: Graph, file: string): string[] {
 
 export const isTest = (p: string) =>
   /(^|\/)(tests?|__tests__|spec)\//.test(p) || /\.(test|spec)\.\w+$/.test(p)
+
+// ---------------------------------------------------------------- 시그니처
+
+/**
+ * 이름은 남았는데 모양이 바뀐 계약.
+ *
+ * `export function formatMoney(cents)` -> `formatMoney(cents, currency)` 는 이름 검사로는 안 잡힌다.
+ * 그런데 가져다 쓰는 3곳은 전부 인자 하나로 부르고 있다. 이게 '이름은 남았는데 깨진' 가장 흔한 조용한 회귀다.
+ *
+ * 조각 텍스트만 있으므로 정규식으로 본다. 그래서 확신이 있는 변화만 말한다 (P4):
+ *   - 필수 인자가 늘었다              부르는 쪽이 전부 깨진다
+ *   - 인자 수가 줄었다                 넘기던 값이 버려진다
+ *   - 반환 타입이 다른 타입으로 바뀌었다  (둘 다 적혀 있을 때만)
+ *   - 파이썬에서 인자 이름이 바뀌었다    키워드 인자로 부르는 쪽이 깨진다
+ * 양쪽 중 한쪽이라도 시그니처를 못 읽으면 아무 말도 하지 않는다.
+ */
+export interface Signature {
+  params: { name: string; required: boolean }[]
+  returns: string | null
+}
+
+export interface SignatureChange {
+  name: string
+  users: string[]
+  /** 무엇이 바뀌었나 */
+  what: 'required-added' | 'params-removed' | 'return-changed' | 'params-renamed'
+  before: string
+  after: string
+}
+
+export function parseSignature(text: string, name: string): Signature | null {
+  const n = escapeRe(name)
+  const m =
+    // TS/JS: [export] [default] [async] function[*] name<T>(params)[: R] {
+    new RegExp(`(?:^|[^\\w$.])(?:async\\s+)?function\\*?\\s+${n}\\s*(?:<[^>]*>)?\\s*\\(([^]*?)\\)\\s*(?::\\s*([^{=]+?))?\\s*\\{`).exec(text) ??
+    // TS/JS: const name = [async] (params)[: R] =>
+    new RegExp(`(?:const|let|var)\\s+${n}\\s*(?::[^=]+)?=\\s*(?:async\\s+)?\\(([^]*?)\\)\\s*(?::\\s*([^=]+?))?\\s*=>`).exec(text) ??
+    // Python: def name(params)[ -> R]:
+    new RegExp(`(?:^|\\n)\\s*(?:async\\s+)?def\\s+${n}\\s*\\(([^]*?)\\)\\s*(?:->\\s*([^:]+?))?\\s*:`).exec(text)
+  if (!m) return null
+  const params = splitParams(m[1]).map(p => {
+    const raw = p.trim()
+    const bare = raw.replace(/^(\*{1,2}|\.\.\.)/, '')
+    const nm = (bare.match(/^[\w$]+/)?.[0] ?? bare).replace(/\?$/, '')
+    // 선택: `x?`, `x = 1`, `...rest`, 파이썬 `*args` `**kw` `x=1`
+    const required = !(/^\*/.test(raw) || /^\.\.\./.test(raw) || /^[\w$]+\s*\?/.test(raw) || /=/.test(raw))
+    return { name: nm, required }
+  }).filter(p => p.name && p.name !== 'self' && p.name !== 'cls')
+  return { params, returns: m[2] ? m[2].replace(/\s+/g, ' ').trim() : null }
+}
+
+/** 최상위 쉼표로만 나눈다. `(a: Record<string, number>, b = [1, 2])` 가 둘로 나뉘어야 한다. */
+function splitParams(s: string): string[] {
+  const out: string[] = []
+  let depth = 0
+  let cur = ''
+  for (const ch of s) {
+    if ('([{<'.includes(ch)) depth++
+    else if (')]}>'.includes(ch)) depth--
+    if (ch === ',' && depth === 0) { out.push(cur); cur = '' } else cur += ch
+  }
+  if (cur.trim()) out.push(cur)
+  return out.filter(x => x.trim())
+}
+
+const show = (s: Signature) =>
+  `(${s.params.map(p => (p.required ? p.name : p.name + '?')).join(', ')})${s.returns ? `: ${s.returns}` : ''}`
+
+export function signatureChanges(
+  contracts: Contract[],
+  { before, after }: { before?: string; after?: string },
+): SignatureChange[] {
+  if (!before || !after) return []
+  const out: SignatureChange[] = []
+  for (const c of contracts) {
+    const a = parseSignature(before, c.name)
+    const b = parseSignature(after, c.name)
+    if (!a || !b) continue
+    const reqA = a.params.filter(p => p.required)
+    const reqB = b.params.filter(p => p.required)
+    let what: SignatureChange['what'] | null = null
+    if (reqB.length > reqA.length) what = 'required-added'
+    else if (b.params.length < a.params.length) what = 'params-removed'
+    else if (a.returns && b.returns && a.returns !== b.returns) what = 'return-changed'
+    // 이름이 바뀐 건 파이썬에서만 깨진다 (키워드 인자). TS 는 자리로 부른다.
+    else if (/\bdef\s/.test(before) && a.params.length === b.params.length && a.params.some((p, i) => p.name !== b.params[i].name)) what = 'params-renamed'
+    if (what) out.push({ name: c.name, users: c.users, what, before: show(a), after: show(b) })
+  }
+  return out
+}

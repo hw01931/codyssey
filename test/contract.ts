@@ -8,7 +8,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { Daemon } from '../src/daemon/server.ts'
-import { contractsOf, brokenContracts, duplicateNames, nameIndex, testsFor } from '../src/core/contract.ts'
+import { contractsOf, brokenContracts, duplicateNames, nameIndex, testsFor, parseSignature, signatureChanges } from '../src/core/contract.ts'
 import { setLang } from '../src/i18n/index.ts'
 
 // 한국어 문장을 확인한다. OS 로케일에 따라 결과가 바뀌면 안 된다.
@@ -114,6 +114,34 @@ eq(
   decision(await edit('web/lib/money.ts', 'formatMoney', 'formatMoney // 주석')),
   'allow',
 )
+
+console.log(`${NL}[이름은 남았는데 모양이 바뀔 때]`)
+{
+  const sig = (before: string, after: string) => edit('web/lib/money.ts', before, after)
+  const added = await sig('export function formatMoney(cents: number): string {', 'export function formatMoney(cents: number, currency: string): string {')
+  eq('필수 인자를 늘리면 확인을 요청한다', decision(added), 'ask')
+  ok('전후 모양을 보여준다', reason(added).includes('(cents)') && reason(added).includes('(cents, currency)'), reason(added))
+  ok('몇 곳이 예전 모양으로 부르는지 말한다', reason(added).includes('3곳'))
+  eq('선택 인자를 늘리는 건 통과 (부르는 쪽이 안 깨진다)',
+    decision(await sig('export function formatMoney(cents: number): string {', 'export function formatMoney(cents: number, currency = "USD"): string {')), 'allow')
+  eq('인자를 없애면 확인을 요청한다',
+    decision(await sig('export function formatMoney(cents: number): string {', 'export function formatMoney(): string {')), 'ask')
+  eq('반환 타입이 바뀌면 확인을 요청한다',
+    decision(await sig('export function formatMoney(cents: number): string {', 'export function formatMoney(cents: number): number {')), 'ask')
+  eq('인자 이름만 바꾸는 건 TS 에서는 통과 (자리로 부른다)',
+    decision(await sig('export function formatMoney(cents: number): string {', 'export function formatMoney(amount: number): string {')), 'allow')
+  eq('본문만 고치는 건 통과', decision(await sig('return `$${(cents / 100).toFixed(2)}`', 'return `$${(cents / 100).toFixed(1)}`')), 'allow')
+
+  // 파싱 자체
+  eq('TS 함수 시그니처를 읽는다', parseSignature('export async function f<T>(a: Record<string, number>, b?: string, ...rest: T[]): Promise<void> {', 'f'),
+    { params: [{ name: 'a', required: true }, { name: 'b', required: false }, { name: 'rest', required: false }], returns: 'Promise<void>' })
+  eq('화살표 함수도', parseSignature('export const g = async (x: number, y = 2) => {', 'g'), { params: [{ name: 'x', required: true }, { name: 'y', required: false }], returns: null })
+  eq('파이썬 def 도 (self 는 뺀다)', parseSignature('class A:\n    def charge(self, amount: int, *, currency="USD") -> bool:\n        pass', 'charge'),
+    { params: [{ name: 'amount', required: true }, { name: 'currency', required: false }], returns: 'bool' })
+  eq('파이썬에서 인자 이름이 바뀌면 깨진다 (키워드 호출)',
+    signatureChanges([{ name: 'charge', users: ['a.py'] }], { before: 'def charge(amount):\n', after: 'def charge(total):\n' })[0]?.what, 'params-renamed')
+  eq('한쪽을 못 읽으면 아무 말 안 한다', signatureChanges([{ name: 'f', users: ['x'] }], { before: 'const f = 1', after: 'function f(a) {' }), [])
+}
 
 console.log(`${NL}[파일을 통째로 새로 쓸 때]`)
 eq(

@@ -14,7 +14,7 @@ import { buildSymbolGraph, sharedSymbols, symbolImpact, type SymbolGraph } from 
 import type { Graph } from '../core/graph.ts'
 import type { ResolveCtx } from '../core/ir.ts'
 import { deltaBrief, promptBrief, sessionBrief, snapshotEdges, type CtxInput } from './context.ts'
-import { brokenContracts, contractsOf, duplicateNames, isTest, nameIndex, testsFor } from '../core/contract.ts'
+import { brokenContracts, contractsOf, duplicateNames, isTest, nameIndex, signatureChanges, testsFor } from '../core/contract.ts'
 import { describeFeature, describeFile, describeModule, emptyLabels, loadLabels, saveLabels, unlabeled, type Labels } from '../core/labels.ts'
 import { t, setLang, resolveLang, getLang, uiStrings } from '../i18n/index.ts'
 import { syncNativeDeny } from '../setup/native.ts'
@@ -384,13 +384,35 @@ export class Daemon {
    */
   private checkContract(file: string, edit: { before: string; after: string; whole: boolean }): Verdict {
     if (this.rules.contracts?.mode === 'off') return { action: 'allow' }
-    const broken = brokenContracts(contractsOf(this.graph, file), edit)
-    if (!broken.length) return { action: 'allow' }
+    const contracts = contractsOf(this.graph, file)
+    const action = this.rules.contracts?.mode === 'block' ? 'block' : 'ask'
+    const broken = brokenContracts(contracts, edit)
+    if (!broken.length) {
+      // 이름은 남았는데 모양이 바뀌는가. Write(파일 전체)는 '전' 이 없으니 디스크의 현재 파일이 '전' 이다.
+      let before = edit.before
+      if (edit.whole && !before) {
+        try {
+          before = fs.readFileSync(path.join(this.repoRoot, file), 'utf8')
+        } catch {
+          before = ''
+        }
+      }
+      const changed = signatureChanges(contracts, { before, after: edit.after })
+      if (!changed.length) return { action: 'allow' }
+      const s = changed[0]
+      const others = changed.length > 1 ? t('daemon.contractOthers', { count: changed.length - 1 }) : ''
+      return {
+        action,
+        rule: `contract: ${file}#${s.name} (signature)`,
+        reason: t('daemon.contractSignature', { name: s.name, before: s.before, after: s.after, count: s.users.length, others, what: t(`daemon.sig.${s.what}` as any) }),
+        hint: t('daemon.contractUsers', { list: s.users.slice(0, 5).join(', '), more: s.users.length > 5 ? ' ' + t('ctx.andMore') : '' }),
+      }
+    }
 
     const c = broken[0]
     const others = broken.length > 1 ? t('daemon.contractOthers', { count: broken.length - 1 }) : ''
     return {
-      action: this.rules.contracts?.mode === 'block' ? 'block' : 'ask',
+      action,
       rule: `contract: ${file}#${c.name}`,
       reason: t('daemon.contractBreak', { name: c.name, others, count: c.users.length }),
       hint: t('daemon.contractUsers', { list: c.users.slice(0, 5).join(', '), more: c.users.length > 5 ? ' ' + t('ctx.andMore') : '' }),
