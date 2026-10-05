@@ -218,7 +218,8 @@ export function parseSignature(text: string, name: string): Signature | null {
   const n = escapeRe(name)
   const m =
     // TS/JS: [export] [default] [async] function[*] name<T>(params)[: R] {
-    new RegExp(`(?:^|[^\\w$.])(?:async\\s+)?function\\*?\\s+${n}\\s*(?:<[^>]*>)?\\s*\\(([^]*?)\\)\\s*(?::\\s*([^{=]+?))?\\s*\\{`).exec(text) ??
+    // 조각 편집은 `{` 없이 시그니처 줄에서 끝날 수 있다. 줄 끝도 받는다.
+    new RegExp(`(?:^|[^\\w$.])(?:async\\s+)?function\\*?\\s+${n}\\s*(?:<[^>]*>)?\\s*\\(([^]*?)\\)\\s*(?::\\s*([^{=\\n]+?))?\\s*(?:\\{|$)`, 'm').exec(text) ??
     // TS/JS: const name = [async] (params)[: R] =>
     new RegExp(`(?:const|let|var)\\s+${n}\\s*(?::[^=]+)?=\\s*(?:async\\s+)?\\(([^]*?)\\)\\s*(?::\\s*([^=]+?))?\\s*=>`).exec(text) ??
     // Python: def name(params)[ -> R]:

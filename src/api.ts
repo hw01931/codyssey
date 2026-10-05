@@ -25,9 +25,13 @@ import { archDiff, type ArchDiff } from './setup/archdiff.ts'
 import type { Recommendations, Recommendation, Reason, Skipped } from './core/recommend.ts'
 import type { VerifyRun, FeatureVerification, TestResult, TestStatus, VerifyOptions } from './core/verify.ts'
 import type { FileHistory } from './core/history.ts'
+import { changesSince, type Change, type TaskContract } from './core/changes.ts'
+import { isTest } from './core/contract.ts'
+import { matches } from './core/rules.ts'
+import { t } from './i18n/index.ts'
 import { setLang, type Lang } from './i18n/index.ts'
 
-export type { Verdict, Rules, Contract, ArchDiff, Recommendations, Recommendation, Reason, Skipped, VerifyRun, FeatureVerification, TestResult, TestStatus, VerifyOptions }
+export type { Verdict, Rules, Contract, ArchDiff, Recommendations, Recommendation, Reason, Skipped, VerifyRun, FeatureVerification, TestResult, TestStatus, VerifyOptions, Change, TaskContract }
 
 export interface Feature {
   id: string
@@ -89,6 +93,28 @@ export interface EditPatch {
   after?: string
   /** after 가 파일 전체인가 (Write 도구) */
   whole?: boolean
+}
+
+export interface ChangeCheck {
+  file: string
+  status: Change['status']
+  verdict: Verdict
+  because: 'denied-by-contract' | 'out-of-scope' | 'test-touched' | 'deleted-but-used' | 'protected' | 'contract-broken' | 'layer' | 'shared'
+}
+
+export interface ChangeReport {
+  /** ask 나 block 이 하나도 없다 */
+  ok: boolean
+  /** 문제 있는 파일만, 심한 것부터 */
+  results: ChangeCheck[]
+  counts: { block: number; ask: number; note: number }
+}
+
+/** 옛 모양 { file, patch } 도 받는다. 그쪽의 before/after 는 파일 전체가 아니라 조각이다. */
+function toChange(c: Change | { file: string; patch?: EditPatch }): { change: Change; fragment: boolean } {
+  if ('status' in c) return { change: c, fragment: false }
+  const p = c.patch ?? {}
+  return { change: { file: c.file, status: 'modified', before: p.before, after: p.after }, fragment: !p.whole }
 }
 
 export interface OpenOptions {
@@ -204,13 +230,62 @@ export class Codyssey {
   }
 
   /**
-   * 변경 묶음(diff)을 반영 전에 검사한다. 파일마다 가장 나쁜 판정을 돌려준다.
-   * 격리된 작업 공간에서 만든 변경을 정식 코드에 합치기 직전에 부른다.
+   * 변경 묶음을 반영 전에 검사한다. 격리된 작업 공간의 변경을 정식 코드에 합치기 직전에 부른다.
+   *
+   * 훅은 편집 하나하나를 본다. 여기서는 묶음 전체를 작업 계약과 대조한다.
+   *   계약의 deny 에 걸린다          block   "이 작업에서 바꾸지 않기로 한 파일"
+   *   사람이 잠근 파일               block
+   *   계약의 allow 밖이다            ask     "작업 범위 밖. 요청하지 않은 변경"
+   *   기존 테스트를 지웠다·고쳤다     ask     (contract.tests 가 'keep' 일 때. 측정된 피해 중 가장 흔한 것)
+   *   밖에 약속한 이름·모양이 바뀐다  ask
+   *   공유 파일                      note
+   * 파일마다 가장 나쁜 판정 하나와 그 이유를 돌려준다. ok 는 ask/block 이 하나도 없다는 뜻이다.
    */
-  checkChanges(changes: { file: string; patch?: EditPatch }[]): { file: string; verdict: Verdict }[] {
-    return changes
-      .map(c => ({ file: this.d.toRel(c.file), verdict: this.checkEdit(c.file, c.patch) }))
-      .filter(r => r.verdict.action !== 'allow')
+  checkChanges(changes: Change[] | { file: string; patch?: EditPatch }[], contract: TaskContract = {}): ChangeReport {
+    const results: ChangeCheck[] = []
+    const rank = { allow: 0, note: 1, ask: 2, block: 3 } as const
+    // 같은 세기면 더 구체적인 이유가 이긴다. "범위 밖" 보다 "기존 테스트를 고쳤다" 가 사람에게 쓸모 있다.
+    const specificity: Record<ChangeCheck['because'], number> = {
+      'denied-by-contract': 8, protected: 7, 'test-touched': 6, 'deleted-but-used': 5, 'contract-broken': 4, 'out-of-scope': 3, layer: 2, shared: 1,
+    }
+    for (const raw of changes) {
+      const { change: c, fragment } = toChange(raw)
+      const rel = this.d.toRel(c.file)
+      const candidates: ChangeCheck[] = []
+      const add = (verdict: Verdict, because: ChangeCheck['because']) => candidates.push({ file: rel, status: c.status, verdict, because })
+
+      if (contract.deny?.some(g => matches(g, rel))) {
+        add({ action: 'block', rule: 'contract.deny', reason: t('changes.denied', { file: rel }) }, 'denied-by-contract')
+      }
+      if (contract.allow?.length && !contract.allow.some(g => matches(g, rel))) {
+        add({ action: 'ask', rule: 'contract.allow', reason: t('changes.outOfScope', { file: rel }) }, 'out-of-scope')
+      }
+      if ((contract.tests ?? 'keep') === 'keep' && isTest(rel) && c.status !== 'added' && !contract.allow?.some(g => matches(g, rel))) {
+        add({ action: 'ask', rule: 'contract.tests', reason: t(c.status === 'deleted' ? 'changes.testDeleted' : 'changes.testChanged', { file: rel }) }, 'test-touched')
+      }
+      if (c.status === 'deleted') {
+        const users = this.facts(rel).importers
+        if (users.length) add({ action: 'ask', rule: `delete: ${rel}`, reason: t('changes.deletedUsed', { file: rel, count: users.length, list: users.slice(0, 3).join(', ') }) }, 'deleted-but-used')
+      }
+      // 잠금·기능 잠금·레이어·공유·계약·시그니처는 편집 판정이 본다.
+      const v = this.checkEdit(c.file, c.status === 'deleted' ? { whole: true, after: '', before: c.before } : { before: c.before, after: c.after, whole: !fragment && (c.before !== undefined || c.status === 'added') })
+      if (v.action !== 'allow') add(v, v.rule?.startsWith('protect') || v.rule?.startsWith('feature') ? 'protected' : v.rule?.startsWith('contract') ? 'contract-broken' : v.rule?.startsWith('layers') ? 'layer' : 'shared')
+
+      if (!candidates.length) continue
+      candidates.sort((a, b) => rank[b.verdict.action] - rank[a.verdict.action] || specificity[b.because] - specificity[a.because])
+      results.push(candidates[0])
+    }
+    results.sort((a, b) => rank[b.verdict.action] - rank[a.verdict.action] || (a.file < b.file ? -1 : 1))
+    return {
+      ok: !results.some(r => r.verdict.action === 'ask' || r.verdict.action === 'block'),
+      results,
+      counts: { block: results.filter(r => r.verdict.action === 'block').length, ask: results.filter(r => r.verdict.action === 'ask').length, note: results.filter(r => r.verdict.action === 'note').length },
+    }
+  }
+
+  /** 기준 커밋 이후의 변경 (커밋 안 한 것 포함). checkChanges 에 그대로 넣는다. */
+  changesSince(baseRef: string): Change[] {
+    return changesSince(this.d.repoRoot, baseRef)
   }
 
   // -------------------------------------------------------------- 갱신

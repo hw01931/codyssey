@@ -206,6 +206,30 @@ basis; protection grows as features are proven.
 
 Tests run with a timeout and without environment variables that look like secrets.
 
+## Before merging: the diff against the task
+
+An agent that was asked to fix checkout and also touched admin, loosened a test and
+changed a function's signature gets caught here, not in review:
+
+```
+$ codyssey check --base origin/main --allow "web/app/checkout/**,web/lib/money.ts" --deny "web/lib/api.ts"
+Changes since origin/main: 6 files
+  block web/lib/api.ts              deleted
+        'web/lib/api.ts' is a file this task agreed not to change.
+  ask   web/__tests__/money.test.ts modified
+        'web/__tests__/money.test.ts' is an existing test and it is being modified. Loosening assertions to pass is the most common measured failure.
+  ask   web/app/admin/page.tsx      modified
+        'web/app/admin/page.tsx' is outside this task's scope. Nobody asked for this change.
+  ask   web/lib/money.ts            modified
+        You are changing the shape of 'formatMoney': (cents) -> (cents, currency). A new required argument: 3 places call it the old way.
+
+  Needs a look: 1 blocked, 3 to approve.
+```
+
+Exit code 1 when anything needs a look, so CI and orchestrators can gate on it. Without
+`--allow`/`--deny` it still checks locks, deleted-but-imported files, existing tests and
+exported shapes.
+
 ## Use it as a library
 
 The hooks, the MCP server and the web view are shells around one engine. Another
@@ -222,7 +246,10 @@ c.contextFor(['src/pay/core.py'])  // facts for a task contract: features, impor
                                    // exported names others use, tests to run, locked files
 c.checkEdit('src/pay/core.py', { before, after })  // allow | note | ask | block, with reason
 c.checkCommand('rm -rf ~/')        // ask: nothing can undo it
-c.checkChanges(diffFiles)          // gate before merging a worker's diff
+c.checkChanges(c.changesSince('main'), {   // gate before merging a worker's diff
+  allow: ['web/app/checkout/**'],          //   edits outside -> ask (nobody asked for them)
+  deny: ['api/payments/**'],               //   edits here   -> block
+})                                         //   existing test changed -> ask; export shape changed -> ask
 await c.afterEdit('src/pay/core.py') // re-index, returns { tests, notes }
 c.lock('src/pay/core.py', 'payment core')  // also written to Claude Code permissions.deny
 await c.diff('origin/main')        // architecture diff
@@ -264,6 +291,7 @@ codyssey status          print a summary in the terminal
 codyssey map             draw the structure in your terminal
 codyssey impact <file>   what breaks if I change this
 codyssey verify [files]  run the tests that cover these files, record the result
+codyssey check --base <ref> [--allow globs] [--deny globs]   check changes against a task contract
 codyssey diff <ref>      how the architecture changed since <ref>
 codyssey mcp             MCP server (6 tools for agents)
 codyssey stop            stop what is running in the background

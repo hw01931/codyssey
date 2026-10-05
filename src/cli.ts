@@ -55,6 +55,7 @@ switch (cmd) {
   case 'status': await cmdStatus(); break
   case 'impact': await cmdImpact(positional[0]); break
   case 'verify': await cmdVerify(positional); break
+  case 'check': await cmdCheck(); break
   default: help()
 }
 
@@ -74,6 +75,7 @@ function help() {
     ['codyssey status', t('cli.cmd.status'), false],
     [`codyssey impact ${t('cli.arg.file')}`, t('cli.cmd.impact'), false],
     [`codyssey verify ${t('cli.arg.files')}`, t('cli.cmd.verify'), true],
+    [`codyssey check --base ${t('cli.arg.base')}`, t('cli.cmd.check'), true],
   ]
   const opts: Array<[string, string]> = [
     [`--root ${t('cli.arg.path')}`, t('cli.opt.root')],
@@ -366,6 +368,33 @@ async function cmdVerify(files: string[]) {
   console.log(C.dim(`\n  ${t('verify.meaning')}`))
   await d.stop()
   if (run.results.some(r => r.status === 'FAIL')) process.exitCode = 1
+}
+
+/**
+ * 기준 커밋 이후의 변경을 작업 계약과 대조한다. 합치기 전에 돈다.
+ *   codyssey check --base origin/main --allow "web/app/checkout/**,web/lib/**" --deny "api/**"
+ * 문제가 있으면 exit 1. CI 와 오케스트레이터가 그대로 쓴다.
+ */
+async function cmdCheck() {
+  const { Codyssey } = await import('./api.ts')
+  const cx = await Codyssey.open(root, { watch: false })
+  const base = flag('base', 'HEAD')
+  const list = (name: string) => (has(name) ? flag(name, '').split(',').map(s => s.trim()).filter(Boolean) : undefined)
+  const contract = { allow: list('allow'), deny: list('deny'), tests: (flag('tests', 'keep') === 'free' ? 'free' : 'keep') as 'keep' | 'free' }
+  const changes = cx.changesSince(base)
+  const report = cx.checkChanges(changes, contract)
+  console.log(`\n${C.b(t('check.title', { base, count: changes.length }))}`)
+  if (contract.allow?.length) console.log(C.dim(`  ${t('check.allow')} ${contract.allow.join(', ')}`))
+  if (contract.deny?.length) console.log(C.dim(`  ${t('check.deny')} ${contract.deny.join(', ')}`))
+  if (!report.results.length) console.log(`  ${C.green(t('check.clean'))}`)
+  for (const r of report.results) {
+    const color = r.verdict.action === 'block' ? C.red : r.verdict.action === 'ask' ? C.yellow : C.dim
+    console.log(`  ${color(r.verdict.action.padEnd(5))} ${r.file}  ${C.dim(r.status)}`)
+    if (r.verdict.action !== 'allow') console.log(`        ${r.verdict.reason}`)
+  }
+  console.log(`\n  ${report.ok ? C.green(t('check.ok')) : C.yellow(t('check.notOk', { block: report.counts.block, ask: report.counts.ask }))}`)
+  await cx.close()
+  if (!report.ok) process.exitCode = 1
 }
 
 async function cmdImpact(file?: string) {

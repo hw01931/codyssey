@@ -188,6 +188,29 @@ AI 는 `verify` MCP 도구로 같은 걸 할 수 있고, Stop 훅이 그걸 가�
 
 테스트는 시간 제한 안에서, 비밀처럼 보이는 환경 변수 없이 돌립니다.
 
+## 합치기 전에: 작업과 diff 를 대조
+
+결제 화면을 고치라고 했는데 관리자 화면도 건드리고, 테스트를 느슨하게 고치고, 함수 시그니처를 바꾼
+에이전트는 리뷰가 아니라 여기서 걸립니다.
+
+```
+$ codyssey check --base origin/main --allow "web/app/checkout/**,web/lib/money.ts" --deny "web/lib/api.ts"
+origin/main 이후 변경: 파일 6개
+  block web/lib/api.ts              deleted
+        'web/lib/api.ts'는 이 작업에서 바꾸지 않기로 한 파일입니다.
+  ask   web/__tests__/money.test.ts modified
+        'web/__tests__/money.test.ts'는 기존 테스트인데 고쳐지고 있습니다. 통과시키려고 조건을 느슨하게 하는 것이 측정된 피해 중 가장 흔합니다.
+  ask   web/app/admin/page.tsx      modified
+        'web/app/admin/page.tsx'는 이 작업 범위 밖입니다. 아무도 요청하지 않은 변경입니다.
+  ask   web/lib/money.ts            modified
+        'formatMoney' 의 모양이 바뀝니다: (cents) -> (cents, currency). 필수 인자가 늘었습니다. 3곳이 예전 모양으로 부릅니다.
+
+  봐야 합니다: 차단 1, 승인 필요 3.
+```
+
+봐야 할 게 있으면 exit 1 이라 CI 와 오케스트레이터가 그대로 문으로 씁니다. `--allow`/`--deny` 가
+없어도 잠금, 쓰이는 파일 삭제, 기존 테스트 수정, export 모양 변경은 봅니다.
+
 ## 라이브러리로 쓰기
 
 훅·MCP 서버·웹 화면은 전부 하나의 엔진 위에 얹힌 껍데기입니다. 다른 프로그램
@@ -204,7 +227,10 @@ c.contextFor(['src/pay/core.py'])  // 작업 계약에 넣을 사실: 영향 기
                                    // 밖에서 쓰는 export, 돌릴 테스트, 잠긴 파일
 c.checkEdit('src/pay/core.py', { before, after })  // allow | note | ask | block + 이유
 c.checkCommand('rm -rf ~/')        // ask: 되돌릴 수 없다
-c.checkChanges(diffFiles)          // 작업자의 변경을 합치기 전 검사
+c.checkChanges(c.changesSince('main'), {   // 작업자의 변경을 합치기 전 검사
+  allow: ['web/app/checkout/**'],          //   범위 밖 변경 -> ask (요청하지 않은 변경)
+  deny: ['api/payments/**'],               //   여기 변경    -> block
+})                                         //   기존 테스트 수정 -> ask, export 모양 변경 -> ask
 await c.afterEdit('src/pay/core.py') // 그래프 갱신, { tests, notes } 반환
 c.lock('src/pay/core.py', '결제 코어')  // Claude Code permissions.deny 에도 적힌다
 await c.diff('origin/main')        // 아키텍처 diff
@@ -254,6 +280,7 @@ codyssey status               터미널에 요약 출력
 codyssey map                  터미널에 구조 그리기
 codyssey impact <파일>        이 파일을 고치면 뭐가 영향받나
 codyssey verify [파일...]     이 파일들을 검증하는 테스트를 돌리고 결과 기록
+codyssey check --base <기준> [--allow glob] [--deny glob]   변경을 작업 계약과 대조
 codyssey diff <기준>          기준 커밋 대비 아키텍처 변화
 codyssey mcp                  MCP 서버 (에이전트가 물어볼 창구)
 codyssey stop                 백그라운드로 켜진 것 끄기
