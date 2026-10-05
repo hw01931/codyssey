@@ -91,7 +91,8 @@ eq('잠긴 파일은 block', cx.checkEdit('api/services/payment.py').action, 'bl
 eq('잠금 목록', cx.lockedFiles(), ['api/services/payment.py'])
 eq('컨텍스트에도 잠금이 반영된다', cx.contextFor(['api/services/payment.py']).locked, ['api/services/payment.py'])
 const changes = cx.checkChanges([{ file: 'api/services/payment.py' }, { file: 'web/components/PriceRow.tsx' }])
-eq('변경 묶음 검사는 문제 있는 파일만 돌려준다', changes.map(x => [x.file, x.verdict.action]), [['api/services/payment.py', 'block']])
+eq('변경 묶음 검사는 문제 있는 파일만 돌려준다', changes.results.map(x => [x.file, x.verdict.action]), [['api/services/payment.py', 'block']])
+eq('합쳐도 되나: 잠긴 파일이 있으니 아니다', changes.ok, false)
 ok('잠금이 Claude Code 규칙으로도 적힌다',
   JSON.parse(fs.readFileSync(path.join(tmp, '.claude/settings.json'), 'utf8')).permissions.deny.includes('Edit(/api/services/payment.py)'))
 eq('푼다', cx.unlock('api/services/payment.py'), { ok: true })
